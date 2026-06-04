@@ -17,12 +17,13 @@ export function mountRunControls(host: HTMLElement, ctx: AppContext): PanelHandl
   title.className = "fieldset-title";
   title.textContent = "Run";
 
+  // Only per-layer stepping is built out for now; the rest come later.
   const granDropdown: Dropdown<StepGranularity> = makeDropdown(
     [
       { value: "layer", label: "1 layer" },
-      { value: "iteration", label: "1 iteration" },
-      { value: "epoch", label: "1 epoch" },
-      { value: "run", label: "Run continuously" },
+      { value: "iteration", label: "1 iteration", disabled: true },
+      { value: "epoch", label: "1 epoch", disabled: true },
+      { value: "run", label: "Run continuously", disabled: true },
     ],
     ctx.state.stepGranularity,
     (g) => ctx.apply({ stepGranularity: g }),

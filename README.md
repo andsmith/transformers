@@ -5,9 +5,10 @@ pick a toy task, set up the architecture, and step through the computation —
 watching activations (as color / Hinton diagrams) and backpropagation update the
 model's weights, one layer / iteration / epoch at a time.
 
-> **Status:** scaffolding. The page layout, dataset generation, and the scalar
-> autograd engine are in place; the model forward pass, training, and the center
-> network visualization are stubbed and being filled in next.
+> **Status:** the forward/backward passes are real and the network
+> visualization steps through the pipeline one stage at a time (forward
+> left→right, then gradient heatmaps sweeping back right→left). Iteration /
+> epoch / continuous stepping and richer per-stage views come next.
 
 Live (project page): **https://andsmith.github.io/transformers/**
 Target vanity URL: `andsmith.net/transformers` (see [Hosting](#hosting)).

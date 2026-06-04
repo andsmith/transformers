@@ -402,6 +402,40 @@ body.resizing {
   display: block;
 }
 
+/* Header overlaid on the top-left of the network view. */
+.nv-header {
+  position: absolute;
+  top: 10px;
+  left: 12px;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.nv-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--ink);
+}
+
+.nv-pass {
+  font-size: 12px;
+  font-weight: 600;
+  margin-top: 2px;
+}
+
+.nv-pass.forward {
+  color: #2b7cff;
+}
+
+.nv-pass.backward {
+  color: #ff6b35;
+}
+
+.nv-pass.idle {
+  color: var(--muted);
+  font-weight: 400;
+}
+
 /* Run controls overlaid on the top-right of the network view. */
 .run-overlay {
   position: absolute;

@@ -9,11 +9,14 @@ import { VERSION } from "../version";
 import type { Task } from "../tasks/types";
 import { ALL_TASKS, TASK_SPECS } from "../tasks/types";
 import type { PEScheme } from "../model/embeddings";
+import { ACT_CMAPS, WEIGHT_CMAPS } from "../viz/colormaps";
 import {
+  makeDropdown,
   makeFieldset,
   makeRadioCards,
   makeRadioGroup,
   makeSlider,
+  type Dropdown,
   type RadioGroup,
   type Slider,
 } from "./controls";
@@ -111,6 +114,26 @@ export function mountTopPanel(host: HTMLElement, ctx: AppContext): PanelHandle {
   learnBox.append(lrSlider.el);
   row.appendChild(learnBox);
 
+  // --- colormaps ---
+  const cmapBox = makeFieldset("Colormaps");
+  const cmapOptions = (names: string[]) =>
+    names.map((n) => ({ value: n, label: n }));
+  const weightsCmapDd: Dropdown<string> = makeDropdown(
+    cmapOptions(Object.keys(WEIGHT_CMAPS)),
+    ctx.state.weightsCmap,
+    (n) => ctx.apply({ weightsCmap: n }),
+  );
+  const actsCmapDd: Dropdown<string> = makeDropdown(
+    cmapOptions(Object.keys(ACT_CMAPS)),
+    ctx.state.actsCmap,
+    (n) => ctx.apply({ actsCmap: n }),
+  );
+  cmapBox.append(
+    label("Weights", weightsCmapDd.el),
+    label("Activations", actsCmapDd.el),
+  );
+  row.appendChild(cmapBox);
+
   function update(): void {
     const s = ctx.state;
     taskRadios.set(s.task);
@@ -118,6 +141,8 @@ export function mountTopPanel(host: HTMLElement, ctx: AppContext): PanelHandle {
     peRadios.set(s.peScheme);
     layerRadios.set(String(s.numOutputLayers) as "1" | "2");
     lrSlider.set(Math.log10(s.learningRate));
+    weightsCmapDd.set(s.weightsCmap);
+    actsCmapDd.set(s.actsCmap);
   }
 
   update();

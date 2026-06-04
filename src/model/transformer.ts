@@ -1,15 +1,15 @@
 /**
  * The toy transformer: token+positional embedding -> single attention head ->
- * output layer(s). Output width is `|V|` per position for the transduction
- * tasks, or `1` for the parens classification task.
+ * residual -> output projection. Output width is `|V|` per position for the
+ * transduction tasks, or `1` (mean-pooled) for the parens classification task.
  *
- * STUB: assembles the sub-modules and registers all parameters (so the
- * optimizer and visualization see a complete model), but `forward` returns
- * correctly-shaped zero logits for now. The real forward path lands in the
- * next milestone.
+ * `forward` returns the logits plus a complete trace of every intermediate as
+ * Values, so the visualization can read activations now and gradients after
+ * `loss.backward()`.
  */
 
 import { Value } from "../engine/value";
+import { addVec, matVec, scaleVec } from "../engine/ops";
 import { ParamStore, heUniform } from "./params";
 import { Embeddings, type PEScheme } from "./embeddings";
 import { AttentionHead, type AttentionTrace } from "./attention";
@@ -20,21 +20,32 @@ export interface ModelConfig {
   vocabSize: number;
   embedDim: number;
   peScheme: PEScheme;
-  /** 1 = single output projection, 2 = one hidden layer + projection. */
+  /** 1 = single output projection, 2 = one hidden layer + projection.
+   *  TODO(later): the 2-layer option is accepted but not yet implemented. */
   numOutputLayers: 1 | 2;
   maxLen: number;
 }
 
 export interface ForwardTrace {
-  /** seqLen x embedDim input embeddings. */
-  embeddings: Value[][];
+  /** seqLen x vocabSize one-hot input encoding (plain numbers, viz only). */
+  oneHot: number[][];
+  /** seqLen x d token-table rows for the input ids (refs into the table). */
+  tok: Value[][];
+  /** seqLen x d positional rows for positions 0..seqLen-1. */
+  pos: Value[][];
+  /** seqLen x d embedding sum x = tok + pos. */
+  x: Value[][];
+  /** Attention intermediates (q/k/v, scores, softmax weights, output). */
   attention: AttentionTrace;
+  /** seqLen x d residual output y = x + attn(x). */
+  y: Value[][];
+  /** Mean-pooled y (classification only, else null). */
+  pooled: Value[] | null;
+  /** Output logits (transduction: seqLen x |V|; classification: 1 x 1). */
+  logits: Value[][];
 }
 
 export interface ForwardResult {
-  /**
-   * Logits. Transduction: seqLen x vocabSize. Classification: 1 x 1.
-   */
   logits: Value[][];
   trace: ForwardTrace;
 }
@@ -42,10 +53,10 @@ export interface ForwardResult {
 export class TransformerModel {
   readonly cfg: ModelConfig;
   readonly store: ParamStore;
-  private readonly embeddings: Embeddings;
-  private readonly attention: AttentionHead;
+  readonly embeddings: Embeddings;
+  readonly attention: AttentionHead;
   /** Output projection: outputUnits x embedDim. */
-  private readonly wOut: Value[][];
+  readonly wOut: Value[][];
   readonly outputUnits: number;
 
   constructor(cfg: ModelConfig, rng: () => number) {
@@ -70,7 +81,6 @@ export class TransformerModel {
       rng,
     );
 
-    // TODO(next milestone): if numOutputLayers === 2, register a hidden layer.
     this.wOut = this.store.matrix(
       "out_proj",
       this.outputUnits,
@@ -79,21 +89,39 @@ export class TransformerModel {
     );
   }
 
-  /**
-   * Run the model on a token sequence.
-   * TODO(next milestone): real forward (embed -> attention -> projection).
-   * Currently returns zero logits of the correct shape.
-   */
+  /** Run the model on a token sequence, capturing the full trace. */
   forward(tokenIds: number[]): ForwardResult {
-    void this.wOut;
-    const embeddings = this.embeddings.embed(tokenIds);
-    const { trace: attnTrace } = this.attention.forward(embeddings);
+    const n = tokenIds.length;
 
-    const positions = isClassification(this.cfg.task) ? 1 : tokenIds.length;
-    const logits: Value[][] = Array.from({ length: positions }, () =>
-      Array.from({ length: this.outputUnits }, () => new Value(0)),
-    );
+    // One-hot encoding (display only — the table lookup is its matmul).
+    const oneHot = tokenIds.map((id) => {
+      const row = new Array<number>(this.cfg.vocabSize).fill(0);
+      row[id] = 1;
+      return row;
+    });
 
-    return { logits, trace: { embeddings, attention: attnTrace } };
+    const { tok, pos, sum: x } = this.embeddings.lookup(tokenIds);
+    const attention = this.attention.forward(x);
+
+    // Residual connection.
+    const y = x.map((xi, i) => addVec(xi, attention.out[i]));
+
+    let pooled: Value[] | null = null;
+    let logits: Value[][];
+    if (isClassification(this.cfg.task)) {
+      // Mean-pool positions, then the single-unit projection.
+      const inv = 1 / n;
+      let acc = scaleVec(y[0], inv);
+      for (let i = 1; i < n; i++) acc = addVec(acc, scaleVec(y[i], inv));
+      pooled = acc;
+      logits = [matVec(this.wOut, pooled)];
+    } else {
+      logits = y.map((yi) => matVec(this.wOut, yi));
+    }
+
+    return {
+      logits,
+      trace: { oneHot, tok, pos, x, attention, y, pooled, logits },
+    };
   }
 }

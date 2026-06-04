@@ -1,9 +1,9 @@
 /**
  * Token + positional embeddings.
  *
- * STUB: the structure, parameter registration, and sinusoidal table are in
- * place, but this is intentionally minimal scaffolding — the full forward path
- * is wired up alongside attention/transformer in the next milestone.
+ * The token table is always trainable. The positional table is either the
+ * fixed sinusoidal encoding (Vaswani et al., 2017) or a trainable matrix,
+ * depending on the configured scheme.
  */
 
 import { Value } from "../engine/value";
@@ -20,12 +20,23 @@ export interface EmbeddingConfig {
   maxLen: number;
 }
 
+/** Per-sample embedding intermediates, exposed for the visualization. */
+export interface EmbeddingLookup {
+  /** seqLen x embedDim — the token-table rows for the input ids (by reference,
+   *  so gradients accumulate into the table). */
+  tok: Value[][];
+  /** seqLen x embedDim — the positional rows for positions 0..seqLen-1. */
+  pos: Value[][];
+  /** seqLen x embedDim — tok + pos, the transformer's input x. */
+  sum: Value[][];
+}
+
 export class Embeddings {
   readonly cfg: EmbeddingConfig;
   /** Token embedding table: vocabSize x embedDim (trainable). */
-  private readonly tokenTable: Value[][];
+  readonly tokenTable: Value[][];
   /** Positional encodings: maxLen x embedDim. Fixed (sinusoidal) or learned. */
-  private readonly posTable: Value[][];
+  readonly posTable: Value[][];
 
   constructor(store: ParamStore, cfg: EmbeddingConfig, rng: () => number) {
     this.cfg = cfg;
@@ -48,9 +59,17 @@ export class Embeddings {
     }
   }
 
-  /** Look up token + positional embedding for each position: seqLen x embedDim. */
+  /** Look up token + positional embeddings for a sequence. */
+  lookup(tokenIds: number[]): EmbeddingLookup {
+    const tok = tokenIds.map((id) => this.tokenTable[id]);
+    const pos = tokenIds.map((_, p) => this.posTable[p]);
+    const sum = tok.map((row, i) => addVec(row, pos[i]));
+    return { tok, pos, sum };
+  }
+
+  /** Token + positional embedding per position (just the summed x). */
   embed(tokenIds: number[]): Value[][] {
-    return tokenIds.map((id, pos) => addVec(this.tokenTable[id], this.posTable[pos]));
+    return this.lookup(tokenIds).sum;
   }
 }
 

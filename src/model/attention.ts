@@ -1,14 +1,14 @@
 /**
- * Single self-attention head.
+ * Single self-attention head, vanilla 2017 style: three learned full-size
+ * projections W_Q/W_K/W_V (headDim x embedDim, headDim == embedDim here),
+ * scaled dot-product scores, row softmax, weighted sum of V.
  *
- * STUB: parameters (Q/K/V projections) are registered so the optimizer and viz
- * can see them, and the forward signature is fixed, but the scaled
- * dot-product computation is left for the next milestone. For now `forward`
- * returns the input unchanged (identity) so shapes line up and the rest of the
- * scaffolding can be exercised.
+ * Every intermediate is kept as Values in the trace so the visualization can
+ * read both forward activations and (after backward()) their gradients.
  */
 
 import { Value } from "../engine/value";
+import { addVec, dot, matVec, scaleVec, softmax } from "../engine/ops";
 import { ParamStore, heUniform } from "./params";
 
 export interface AttentionConfig {
@@ -17,17 +17,25 @@ export interface AttentionConfig {
   headDim: number;
 }
 
-/** Per-head intermediates we will expose to the visualization. */
+/** Per-head intermediates exposed to the visualization. */
 export interface AttentionTrace {
-  /** seqLen x seqLen attention weights (after softmax). */
-  weights: number[][];
+  /** seqLen x headDim projections. */
+  q: Value[][];
+  k: Value[][];
+  v: Value[][];
+  /** seqLen x seqLen scaled dot-product scores (pre-softmax). */
+  scores: Value[][];
+  /** seqLen x seqLen attention weights (post-softmax, rows sum to 1). */
+  attnW: Value[][];
+  /** seqLen x headDim weighted sum of V — the attention output. */
+  out: Value[][];
 }
 
 export class AttentionHead {
   readonly cfg: AttentionConfig;
-  private readonly wq: Value[][];
-  private readonly wk: Value[][];
-  private readonly wv: Value[][];
+  readonly wq: Value[][];
+  readonly wk: Value[][];
+  readonly wv: Value[][];
 
   constructor(store: ParamStore, cfg: AttentionConfig, rng: () => number) {
     this.cfg = cfg;
@@ -40,17 +48,33 @@ export class AttentionHead {
   /**
    * Compute attended outputs for a sequence of embeddings.
    * @param x seqLen x embedDim
-   * @returns seqLen x headDim outputs plus an optional trace for the viz.
-   *
-   * TODO(next milestone): project to Q/K/V, scaled dot-product attention,
-   * softmax over keys, weighted sum of V. Currently identity passthrough.
    */
-  forward(x: Value[][]): { out: Value[][]; trace: AttentionTrace } {
-    void this.wq;
-    void this.wk;
-    void this.wv;
+  forward(x: Value[][]): AttentionTrace {
     const n = x.length;
-    const weights = Array.from({ length: n }, () => Array.from({ length: n }, () => 0));
-    return { out: x, trace: { weights } };
+    const invSqrtD = 1 / Math.sqrt(this.cfg.headDim);
+
+    const q = x.map((xi) => matVec(this.wq, xi));
+    const k = x.map((xi) => matVec(this.wk, xi));
+    const v = x.map((xi) => matVec(this.wv, xi));
+
+    // scores[i][j] = q_i · k_j / sqrt(d)
+    const scores: Value[][] = [];
+    for (let i = 0; i < n; i++) {
+      const row: Value[] = [];
+      for (let j = 0; j < n; j++) row.push(dot(q[i], k[j]).mul(invSqrtD));
+      scores.push(row);
+    }
+
+    const attnW = scores.map((row) => softmax(row));
+
+    // out[i] = sum_j attnW[i][j] * v[j]
+    const out: Value[][] = [];
+    for (let i = 0; i < n; i++) {
+      let acc = scaleVec(v[0], attnW[i][0]);
+      for (let j = 1; j < n; j++) acc = addVec(acc, scaleVec(v[j], attnW[i][j]));
+      out.push(acc);
+    }
+
+    return { q, k, v, scores, attnW, out };
   }
 }

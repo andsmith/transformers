@@ -46,6 +46,10 @@ export interface AppState {
 
   // --- which split is shown in the dataset list ---
   datasetView: DatasetView;
+
+  // --- network visualization colormaps (view-only) ---
+  weightsCmap: string; // key into WEIGHT_CMAPS
+  actsCmap: string; // key into ACT_CMAPS
 }
 
 /**
@@ -149,12 +153,14 @@ export function createInitialState(): AppState {
   return {
     ...DEFAULTS,
     numHeads: 1,
-    stepGranularity: "iteration",
+    stepGranularity: "layer",
     running: false,
     display: "chars",
     seed,
     lossView: "iteration",
     datasetView: "train",
+    weightsCmap: "viridis",
+    actsCmap: "bwr",
     ...built,
   };
 }

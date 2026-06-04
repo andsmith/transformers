@@ -150,6 +150,7 @@ export function makeSlider(opts: SliderOpts): Slider {
 export interface DropdownOption<T extends string> {
   value: T;
   label: string;
+  disabled?: boolean;
 }
 
 export interface Dropdown<T extends string> {
@@ -168,6 +169,7 @@ export function makeDropdown<T extends string>(
     const o = document.createElement("option");
     o.value = opt.value;
     o.textContent = opt.label;
+    o.disabled = !!opt.disabled;
     el.appendChild(o);
   }
   el.value = selected;
