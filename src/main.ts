@@ -26,6 +26,8 @@ const REBUILD_KEYS = new Set<keyof AppState>([
   "peScheme",
   "numOutputLayers",
   "numExamples",
+  "maxSeqLen",
+  "fixedLength",
   "trainTestSplit",
 ]);
 

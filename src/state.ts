@@ -4,7 +4,7 @@
  * after `main.ts` mutates it (the whiteboard_web convention).
  */
 
-import { generateDataset, mulberry32, MAX_LEN } from "./tasks/datasets";
+import { generateDataset, mulberry32, MIN_LEN } from "./tasks/datasets";
 import type { Dataset, Task } from "./tasks/types";
 import type { PEScheme } from "./model/embeddings";
 import { TransformerModel } from "./model/transformer";
@@ -29,6 +29,8 @@ export interface AppState {
   // --- dataset controls ---
   display: DisplayMode;
   numExamples: number; // 10..1000
+  maxSeqLen: number; // longest generated sequence
+  fixedLength: boolean; // if true, every sequence is exactly maxSeqLen
   trainTestSplit: number; // 0..0.5 (fraction held out for test)
   seed: number;
   dataset: Dataset;
@@ -65,6 +67,8 @@ export interface Defaults {
   numOutputLayers: 1 | 2;
   learningRate: number;
   numExamples: number;
+  maxSeqLen: number;
+  fixedLength: boolean;
   trainTestSplit: number;
 }
 
@@ -76,6 +80,8 @@ const DEFAULTS: Defaults = {
   numOutputLayers: 1,
   learningRate: 0.05,
   numExamples: 100,
+  maxSeqLen: 7,
+  fixedLength: false,
   trainTestSplit: 0.2,
 };
 
@@ -88,6 +94,8 @@ export function rebuild(state: {
   numOutputLayers: 1 | 2;
   learningRate: number;
   numExamples: number;
+  maxSeqLen: number;
+  fixedLength: boolean;
   trainTestSplit: number;
   seed: number;
 }): {
@@ -96,12 +104,19 @@ export function rebuild(state: {
   optim: SGD;
   loop: TrainingLoop;
 } {
+  // When fixedLength is on every sequence is exactly maxSeqLen; otherwise they
+  // vary from MIN_LEN up to maxSeqLen (clamped so min never exceeds max).
+  const maxLen = state.maxSeqLen;
+  const minLen = state.fixedLength ? maxLen : Math.min(MIN_LEN, maxLen);
+
   const dataset = generateDataset({
     task: state.task,
     vocabSize: state.numSymbols,
     count: state.numExamples,
     testFraction: state.trainTestSplit,
     seed: state.seed,
+    minLen,
+    maxLen,
   });
 
   // Derive a model-init RNG from the same seed (offset so weights differ from
@@ -114,7 +129,7 @@ export function rebuild(state: {
       embedDim: state.embedDim,
       peScheme: state.peScheme,
       numOutputLayers: state.numOutputLayers,
-      maxLen: MAX_LEN,
+      maxLen, // positional table must cover the longest sequence
     },
     rng,
   );

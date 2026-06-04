@@ -181,6 +181,35 @@ export function makeDropdown<T extends string>(
   };
 }
 
+export interface Checkbox {
+  el: HTMLElement;
+  set(checked: boolean): void;
+}
+
+/** A labelled checkbox. */
+export function makeCheckbox(
+  label: string,
+  checked: boolean,
+  onChange: (checked: boolean) => void,
+): Checkbox {
+  const el = document.createElement("label");
+  el.className = "checkbox";
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.checked = checked;
+  input.addEventListener("change", () => onChange(input.checked));
+  const span = document.createElement("span");
+  span.textContent = label;
+  el.append(input, span);
+  return {
+    el,
+    set(value: boolean) {
+      if (document.activeElement === input) return;
+      input.checked = value;
+    },
+  };
+}
+
 export function makeButton(label: string, onClick: () => void): HTMLButtonElement {
   const btn = document.createElement("button");
   btn.className = "btn";

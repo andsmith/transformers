@@ -7,12 +7,14 @@
 import type { AppContext, DisplayMode } from "../state";
 import type { Example } from "../tasks/types";
 import { isClassification } from "../tasks/types";
-import { datasetSummary } from "../tasks/datasets";
+import { datasetSummary, MAX_SEQ_LEN_LIMIT } from "../tasks/datasets";
 import { tokenChar, tokenColor, MAX_VOCAB } from "../tasks/grammar";
 import {
   makeButton,
+  makeCheckbox,
   makeRadioGroup,
   makeSlider,
+  type Checkbox,
   type RadioGroup,
   type Slider,
 } from "./controls";
@@ -45,13 +47,26 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
   );
 
   const vocabSlider: Slider = makeSlider({
-    label: "Vocabulary size",
+    label: "Symbols (|V|)",
     min: 2,
     max: MAX_VOCAB,
     step: 1,
     value: ctx.state.numSymbols,
     onInput: (v) => ctx.apply({ numSymbols: v }),
   });
+  const maxLenSlider: Slider = makeSlider({
+    label: "Max sequence length",
+    min: 2,
+    max: MAX_SEQ_LEN_LIMIT,
+    step: 1,
+    value: ctx.state.maxSeqLen,
+    onInput: (v) => ctx.apply({ maxSeqLen: v }),
+  });
+  const fixedLenCheck: Checkbox = makeCheckbox(
+    "All sequences max length",
+    ctx.state.fixedLength,
+    (c) => ctx.apply({ fixedLength: c }),
+  );
   const countSlider: Slider = makeSlider({
     label: "Examples",
     min: 10,
@@ -73,7 +88,15 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
 
   const controls = document.createElement("div");
   controls.className = "dataset-controls";
-  controls.append(displayRadios.el, vocabSlider.el, countSlider.el, splitSlider.el, regenBtn);
+  controls.append(
+    displayRadios.el,
+    vocabSlider.el,
+    maxLenSlider.el,
+    fixedLenCheck.el,
+    countSlider.el,
+    splitSlider.el,
+    regenBtn,
+  );
   host.appendChild(controls);
 
   // --- examples ---
@@ -147,6 +170,8 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
     summary.textContent = datasetSummary(s.dataset);
     displayRadios.set(s.display);
     vocabSlider.set(s.numSymbols);
+    maxLenSlider.set(s.maxSeqLen);
+    fixedLenCheck.set(s.fixedLength);
     countSlider.set(s.numExamples);
     splitSlider.set(Math.round(s.trainTestSplit * 100));
 

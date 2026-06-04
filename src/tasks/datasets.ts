@@ -10,6 +10,8 @@ import { isBalanced, parensRoles, type ParensRoles } from "./grammar";
 /** Default sequence-length range for generated strings (short strings). */
 export const MIN_LEN = 3;
 export const MAX_LEN = 7;
+/** Hard upper bound for the max-sequence-length slider. */
+export const MAX_SEQ_LEN_LIMIT = 12;
 
 export interface GenOptions {
   task: Task;

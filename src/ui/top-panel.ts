@@ -9,7 +9,6 @@ import type { Task } from "../tasks/types";
 import { ALL_TASKS, TASK_SPECS } from "../tasks/types";
 import type { PEScheme } from "../model/embeddings";
 import type { StepGranularity } from "../training/loop";
-import { MAX_VOCAB } from "../tasks/grammar";
 import {
   makeButton,
   makeDropdown,
@@ -56,14 +55,6 @@ export function mountTopPanel(host: HTMLElement, ctx: AppContext): PanelHandle {
 
   // --- model ---
   const modelBox = makeFieldset("Model");
-  const symbolsSlider: Slider = makeSlider({
-    label: "Symbols (|V|)",
-    min: 2,
-    max: MAX_VOCAB,
-    step: 1,
-    value: ctx.state.numSymbols,
-    onInput: (v) => ctx.apply({ numSymbols: v }),
-  });
   const embedSlider: Slider = makeSlider({
     label: "Embedding dim",
     min: 2,
@@ -96,7 +87,17 @@ export function mountTopPanel(host: HTMLElement, ctx: AppContext): PanelHandle {
     "1",
     () => {},
   );
-  modelBox.append(symbolsSlider.el, embedSlider.el, label("Positional", peRadios.el), label("Output", layerRadios.el), label("Attention", headRadios.el));
+  // Lay the model items out in a wrapping horizontal row to keep the panel
+  // short.
+  const modelRow = document.createElement("div");
+  modelRow.className = "fieldset-row";
+  modelRow.append(
+    embedSlider.el,
+    label("Positional", peRadios.el),
+    label("Output", layerRadios.el),
+    label("Attention", headRadios.el),
+  );
+  modelBox.append(modelRow);
   row.appendChild(modelBox);
 
   // --- learning ---
@@ -134,7 +135,6 @@ export function mountTopPanel(host: HTMLElement, ctx: AppContext): PanelHandle {
   function update(): void {
     const s = ctx.state;
     taskRadios.set(s.task);
-    symbolsSlider.set(s.numSymbols);
     embedSlider.set(s.embedDim);
     peRadios.set(s.peScheme);
     layerRadios.set(String(s.numOutputLayers) as "1" | "2");
