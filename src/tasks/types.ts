@@ -19,6 +19,9 @@ export interface TaskSpec {
  *   (unbalanced) or `[1]` (balanced).
  */
 export interface Example {
+  /** Stable global id (0..count-1, generation order). Survives the train/test
+   *  shuffle so a sample can be referenced from anywhere. */
+  index: number;
   input: number[];
   output: number[];
 }

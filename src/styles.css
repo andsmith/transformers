@@ -363,15 +363,30 @@ body.resizing {
   color: var(--muted);
 }
 
-.class-columns {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
+.ex-index {
+  color: var(--muted);
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  min-width: 34px;
+  text-align: right;
 }
 
-.class-group .caption {
+.class-tag {
+  margin-left: auto;
+  font-size: 10px;
   font-weight: 600;
-  margin-bottom: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+
+.class-tag.balanced {
+  color: #1f7a4d;
+  background: #e3f6ec;
+}
+
+.class-tag.unbalanced {
+  color: #a13a2a;
+  background: #fbe7e3;
 }
 
 /* ---- center / network view ---- */
@@ -387,16 +402,40 @@ body.resizing {
   display: block;
 }
 
+/* Run controls overlaid on the top-right of the network view. */
+.run-overlay {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 10;
+  background: var(--panel-bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.run-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
 /* ---- loss panel ---- */
 .loss-panel {
   grid-area: loss;
   display: flex;
   flex-direction: column;
+  overflow: hidden; /* keep the plot inside the frame */
 }
 
 .loss-canvas {
   width: 100%;
   flex: 1;
+  min-height: 0; /* allow the canvas to shrink within the flex column */
   display: block;
 }
 

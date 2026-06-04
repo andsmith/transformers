@@ -102,7 +102,7 @@ function generateOne(
   roles: ParensRoles,
   minLen: number,
   maxLen: number,
-): Example {
+): Omit<Example, "index"> {
   const len = randInt(rng, minLen, maxLen);
 
   switch (task) {
@@ -148,7 +148,8 @@ export function generateDataset(opts: GenOptions): Dataset {
 
   const examples: Example[] = [];
   for (let i = 0; i < count; i++) {
-    examples.push(generateOne(rng, task, vocabSize, roles, minLen, maxLen));
+    // Index in generation order; it travels with the sample through the shuffle.
+    examples.push({ index: i, ...generateOne(rng, task, vocabSize, roles, minLen, maxLen) });
   }
 
   const shuffled = shuffle(rng, examples);

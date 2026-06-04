@@ -13,6 +13,7 @@ import { TrainingLoop, type StepGranularity } from "./training/loop";
 
 export type DisplayMode = "chars" | "squares";
 export type LossView = "iteration" | "epoch";
+export type DatasetView = "train" | "test";
 
 export interface AppState {
   // --- task & model hyperparameters ---
@@ -42,6 +43,9 @@ export interface AppState {
 
   // --- loss panel ---
   lossView: LossView;
+
+  // --- which split is shown in the dataset list ---
+  datasetView: DatasetView;
 }
 
 /**
@@ -150,6 +154,7 @@ export function createInitialState(): AppState {
     display: "chars",
     seed,
     lossView: "iteration",
+    datasetView: "train",
     ...built,
   };
 }

@@ -1,10 +1,11 @@
 /**
- * Right-hand dataset panel: display mode, vocabulary/size/split sliders, a
- * regenerate button, and a rendering of the generated examples (input/output
- * pairs for transduction tasks, or two labelled groups for classification).
+ * Dataset panel: display mode, vocabulary / sequence-length / size / split
+ * controls, a regenerate button, a train/test view selector, and an indexed
+ * list of every sample in the selected split (input → output for transduction,
+ * input + balanced/unbalanced tag for classification).
  */
 
-import type { AppContext, DisplayMode } from "../state";
+import type { AppContext, DatasetView, DisplayMode } from "../state";
 import type { Example } from "../tasks/types";
 import { isClassification } from "../tasks/types";
 import { datasetSummary, MAX_SEQ_LEN_LIMIT } from "../tasks/datasets";
@@ -12,16 +13,15 @@ import { tokenChar, tokenColor, MAX_VOCAB } from "../tasks/grammar";
 import {
   makeButton,
   makeCheckbox,
+  makeDropdown,
   makeRadioGroup,
   makeSlider,
   type Checkbox,
+  type Dropdown,
   type RadioGroup,
   type Slider,
 } from "./controls";
 import type { PanelHandle } from "./top-panel";
-
-/** Cap on how many examples we draw, to keep the DOM light. */
-const MAX_SHOWN = 60;
 
 export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHandle {
   host.classList.add("panel", "dataset-panel");
@@ -86,6 +86,21 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
   });
   const regenBtn = makeButton("Regenerate", () => ctx.regenerate());
 
+  const viewDropdown: Dropdown<DatasetView> = makeDropdown(
+    [
+      { value: "train", label: "Train set" },
+      { value: "test", label: "Test set" },
+    ],
+    ctx.state.datasetView,
+    (v) => ctx.apply({ datasetView: v }),
+  );
+  const viewRow = document.createElement("div");
+  viewRow.className = "labeled";
+  const viewCap = document.createElement("div");
+  viewCap.className = "caption";
+  viewCap.textContent = "Viewing";
+  viewRow.append(viewCap, viewDropdown.el);
+
   const controls = document.createElement("div");
   controls.className = "dataset-controls";
   controls.append(
@@ -96,6 +111,7 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
     countSlider.el,
     splitSlider.el,
     regenBtn,
+    viewRow,
   );
   host.appendChild(controls);
 
@@ -126,44 +142,43 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
     return row;
   }
 
-  function renderTransduction(list: Example[]): void {
-    for (const ex of list.slice(0, MAX_SHOWN)) {
-      const row = document.createElement("div");
-      row.className = "example-row";
-      const arrow = document.createElement("span");
-      arrow.className = "arrow";
-      arrow.textContent = "→";
-      row.append(renderSeq(ex.input), arrow, renderSeq(ex.output));
-      examplesEl.appendChild(row);
-    }
-  }
+  /** Render every sample in `list` as an indexed row (uses each sample's
+   *  stable global index). Transduction shows input → output; classification
+   *  shows the input plus a balanced/unbalanced tag. */
+  function renderList(list: Example[]): void {
+    const classification = isClassification(ctx.state.task);
+    const frag = document.createDocumentFragment();
+    for (const ex of list) {
+      const rowEl = document.createElement("div");
+      rowEl.className = "example-row";
 
-  function renderClassification(list: Example[]): void {
-    const balanced = list.filter((e) => e.output[0] === 1);
-    const unbalanced = list.filter((e) => e.output[0] === 0);
-    const half = Math.floor(MAX_SHOWN / 2);
+      const idx = document.createElement("span");
+      idx.className = "ex-index";
+      idx.textContent = `#${ex.index}`;
+      rowEl.append(idx, renderSeq(ex.input));
 
-    const group = (titleText: string, items: Example[]): HTMLElement => {
-      const col = document.createElement("div");
-      col.className = "class-group";
-      const t = document.createElement("div");
-      t.className = "caption";
-      t.textContent = `${titleText} (${items.length})`;
-      col.appendChild(t);
-      for (const ex of items.slice(0, half)) {
-        const row = document.createElement("div");
-        row.className = "example-row";
-        row.appendChild(renderSeq(ex.input));
-        col.appendChild(row);
+      if (classification) {
+        const balanced = ex.output[0] === 1;
+        const tag = document.createElement("span");
+        tag.className = `class-tag ${balanced ? "balanced" : "unbalanced"}`;
+        tag.textContent = balanced ? "balanced" : "unbalanced";
+        rowEl.append(tag);
+      } else {
+        const arrow = document.createElement("span");
+        arrow.className = "arrow";
+        arrow.textContent = "→";
+        rowEl.append(arrow, renderSeq(ex.output));
       }
-      return col;
-    };
-
-    const cols = document.createElement("div");
-    cols.className = "class-columns";
-    cols.append(group("Balanced", balanced), group("Unbalanced", unbalanced));
-    examplesEl.appendChild(cols);
+      frag.appendChild(rowEl);
+    }
+    examplesEl.innerHTML = "";
+    examplesEl.appendChild(frag);
   }
+
+  // The example list can be large (up to 1000 rows), so only rebuild it when
+  // something that affects it actually changes.
+  let lastDataset = ctx.state.dataset;
+  let lastListKey = "";
 
   function update(): void {
     const s = ctx.state;
@@ -174,10 +189,14 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
     fixedLenCheck.set(s.fixedLength);
     countSlider.set(s.numExamples);
     splitSlider.set(Math.round(s.trainTestSplit * 100));
+    viewDropdown.set(s.datasetView);
 
-    examplesEl.innerHTML = "";
-    if (isClassification(s.task)) renderClassification(s.dataset.examples);
-    else renderTransduction(s.dataset.examples);
+    const listKey = `${s.datasetView}|${s.display}`;
+    if (s.dataset !== lastDataset || listKey !== lastListKey) {
+      renderList(s.datasetView === "test" ? s.dataset.test : s.dataset.train);
+      lastDataset = s.dataset;
+      lastListKey = listKey;
+    }
   }
 
   update();

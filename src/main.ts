@@ -15,6 +15,7 @@ import { mountTopPanel, type PanelHandle } from "./ui/top-panel";
 import { mountDatasetPanel } from "./ui/dataset-panel";
 import { mountLossPanel } from "./ui/loss-panel";
 import { mountNetworkView } from "./ui/network-view";
+import { mountRunControls } from "./ui/run-controls";
 import { mountSplitters } from "./ui/splitters";
 import { VERSION } from "./version";
 
@@ -62,12 +63,14 @@ window.addEventListener("DOMContentLoaded", () => {
   let dataset: PanelHandle;
   let loss: PanelHandle;
   let network: PanelHandle;
+  let run: PanelHandle;
 
   function refreshAll(): void {
     top.update();
     dataset.update();
     loss.update();
     network.update();
+    run.update();
   }
 
   function doRebuild(): void {
@@ -101,7 +104,7 @@ window.addEventListener("DOMContentLoaded", () => {
     step() {
       if (state.stepGranularity === "run") {
         state.running = !state.running;
-        top.update();
+        run.update();
         return;
       }
       state.running = false;
@@ -116,12 +119,13 @@ window.addEventListener("DOMContentLoaded", () => {
   dataset = mountDatasetPanel(datasetHost, ctx);
   loss = mountLossPanel(lossHost, ctx);
   network = mountNetworkView(centerHost, ctx);
+  run = mountRunControls(centerHost, ctx); // overlay on the network view
 
   // --- animation loop ---
   const tick = () => {
     if (state.running && state.stepGranularity === "run") {
       for (let i = 0; i < STEPS_PER_FRAME; i++) state.loop.stepIteration();
-      top.update(); // refresh counters
+      run.update(); // refresh counters/button
     }
     loss.update();
     network.update();

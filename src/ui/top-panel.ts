@@ -1,6 +1,7 @@
 /**
- * Top panel: title, task selection, model + learning hyperparameters, and the
- * Step/Go control with its granularity dropdown.
+ * Top panel: title, task selection, and the model + learning hyperparameters.
+ * (The Step/Go run controls live as an overlay on the network view — see
+ * run-controls.ts.)
  */
 
 import type { AppContext } from "../state";
@@ -8,15 +9,11 @@ import { VERSION } from "../version";
 import type { Task } from "../tasks/types";
 import { ALL_TASKS, TASK_SPECS } from "../tasks/types";
 import type { PEScheme } from "../model/embeddings";
-import type { StepGranularity } from "../training/loop";
 import {
-  makeButton,
-  makeDropdown,
   makeFieldset,
   makeRadioCards,
   makeRadioGroup,
   makeSlider,
-  type Dropdown,
   type RadioGroup,
   type Slider,
 } from "./controls";
@@ -114,24 +111,6 @@ export function mountTopPanel(host: HTMLElement, ctx: AppContext): PanelHandle {
   learnBox.append(lrSlider.el);
   row.appendChild(learnBox);
 
-  // --- run ---
-  const runBox = makeFieldset("Run");
-  const granDropdown: Dropdown<StepGranularity> = makeDropdown(
-    [
-      { value: "layer", label: "1 layer" },
-      { value: "iteration", label: "1 iteration" },
-      { value: "epoch", label: "1 epoch" },
-      { value: "run", label: "Run continuously" },
-    ],
-    ctx.state.stepGranularity,
-    (g) => ctx.apply({ stepGranularity: g }),
-  );
-  const stepBtn = makeButton("Step", () => ctx.step());
-  const counters = document.createElement("div");
-  counters.className = "hint";
-  runBox.append(granDropdown.el, stepBtn, counters);
-  row.appendChild(runBox);
-
   function update(): void {
     const s = ctx.state;
     taskRadios.set(s.task);
@@ -139,10 +118,6 @@ export function mountTopPanel(host: HTMLElement, ctx: AppContext): PanelHandle {
     peRadios.set(s.peScheme);
     layerRadios.set(String(s.numOutputLayers) as "1" | "2");
     lrSlider.set(Math.log10(s.learningRate));
-    granDropdown.set(s.stepGranularity);
-    stepBtn.textContent =
-      s.stepGranularity === "run" ? (s.running ? "Stop" : "Go") : "Step";
-    counters.textContent = `iter ${s.loop.iteration} · epoch ${s.loop.epoch}`;
   }
 
   update();
