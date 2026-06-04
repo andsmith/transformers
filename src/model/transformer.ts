@@ -89,6 +89,18 @@ export class TransformerModel {
     );
   }
 
+  /**
+   * Zero gradients on all trainable params AND the (constant) sinusoidal
+   * positional table — the latter is part of the graph but not in the store,
+   * so without this its displayed ∇ would accumulate across samples.
+   */
+  zeroGrad(): void {
+    this.store.zeroGrad();
+    for (const row of this.embeddings.posTable) {
+      for (const v of row) v.grad = 0;
+    }
+  }
+
   /** Run the model on a token sequence, capturing the full trace. */
   forward(tokenIds: number[]): ForwardResult {
     const n = tokenIds.length;

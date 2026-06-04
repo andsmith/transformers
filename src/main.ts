@@ -32,8 +32,11 @@ const REBUILD_KEYS = new Set<keyof AppState>([
   "trainTestSplit",
 ]);
 
-/** How many train iterations to run per frame while in continuous "run" mode. */
-const STEPS_PER_FRAME = 5;
+/** Per-frame time budget (ms) for continuous "run" mode — scalar-autograd
+ *  iterations vary a lot in cost with seqLen/embedDim, so budget time rather
+ *  than a fixed step count to keep the UI responsive. */
+const RUN_FRAME_BUDGET_MS = 24;
+const RUN_MAX_STEPS_PER_FRAME = 50;
 
 window.addEventListener("DOMContentLoaded", () => {
   const root = document.getElementById("app");
@@ -86,6 +89,10 @@ window.addEventListener("DOMContentLoaded", () => {
     apply(patch) {
       Object.assign(state, patch);
       if ("learningRate" in patch) state.optim.setLearningRate(state.learningRate);
+      // Leaving "run" granularity stops a continuous run.
+      if ("stepGranularity" in patch && patch.stepGranularity !== "run") {
+        state.running = false;
+      }
       const needsRebuild = Object.keys(patch).some((k) =>
         REBUILD_KEYS.has(k as keyof AppState),
       );
@@ -124,7 +131,15 @@ window.addEventListener("DOMContentLoaded", () => {
   // --- animation loop ---
   const tick = () => {
     if (state.running && state.stepGranularity === "run") {
-      for (let i = 0; i < STEPS_PER_FRAME; i++) state.loop.stepIteration();
+      const t0 = performance.now();
+      let steps = 0;
+      while (
+        performance.now() - t0 < RUN_FRAME_BUDGET_MS &&
+        steps < RUN_MAX_STEPS_PER_FRAME
+      ) {
+        state.loop.stepIteration();
+        steps++;
+      }
       run.update(); // refresh counters/button
     }
     loss.update();

@@ -335,11 +335,18 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
       ? `Network Visualization - Epoch ${loop.epoch} - Sample #${st.sample.index}`
       : "Network Visualization";
     passEl.className = "nv-pass " + (st ? st.phase : "idle");
-    passEl.textContent = st
-      ? st.phase === "forward"
-        ? "Forward Pass"
-        : "Backpropagation Pass"
-      : "Press Step to begin";
+    if (!st) {
+      passEl.textContent = "Press Step to begin";
+    } else if (st.phase === "forward") {
+      passEl.textContent = "Forward Pass";
+    } else if (st.phase === "backward") {
+      passEl.textContent = "Backpropagation Pass";
+    } else {
+      const loss = st.lossValue.data.toFixed(3);
+      passEl.textContent = ctx.state.running
+        ? `Training continuously · loss ${loss}`
+        : `Iteration complete · loss ${loss}`;
+    }
 
     if (!st) {
       g.fillStyle = "#9aa7b4";
@@ -368,7 +375,8 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
     cell = Math.max(2, Math.min(14, Math.floor(cell)));
 
     const phase = st.phase;
-    const active = st.stage;
+    // "complete" shows the whole pipeline with no active stage.
+    const active = phase === "complete" ? -1 : st.stage;
 
     let x = MARGIN;
     for (let i = 0; i < cols.length; i++) {
@@ -383,9 +391,10 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
       g.fillText(PIPELINE_STAGES[i].title, x + colW / 2, HEADER_H + 12, colW + COL_GAP - 4);
       g.textAlign = "left";
 
-      // Column content. Forward: reveal columns up to the active one. Backward:
-      // all visible; columns the sweep has reached (>= active) show gradients.
-      const visible = phase === "backward" || i <= active;
+      // Column content. Forward: reveal columns up to the active one.
+      // Backward: all visible; columns the sweep has reached (>= active) show
+      // gradients. Complete: everything visible as values.
+      const visible = phase !== "forward" || i <= active;
       if (visible) {
         const grad = phase === "backward" && i >= active;
         c.draw(g, x, contentTop + 4, cell, grad);

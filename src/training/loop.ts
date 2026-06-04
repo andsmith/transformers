@@ -15,7 +15,9 @@ import { isClassification } from "../tasks/types";
 import type { Dataset, Example } from "../tasks/types";
 
 export type StepGranularity = "layer" | "iteration" | "epoch" | "run";
-export type PassPhase = "forward" | "backward";
+/** "complete" = a whole-sample step (iteration/epoch/run) finished training
+ *  this sample; the viz shows the full pipeline, no active stage. */
+export type PassPhase = "forward" | "backward" | "complete";
 
 export interface PipelineStage {
   id: string;
@@ -59,6 +61,8 @@ export class TrainingLoop {
   /** Per-iteration and per-epoch loss history (read by the loss panel). */
   readonly iterHistory: LossPoint[] = [];
   readonly epochHistory: LossPoint[] = [];
+  /** Index into iterHistory where the current epoch began (for epoch means). */
+  private epochIterStart = 0;
   /** In-progress per-stage walkthrough (null between samples). */
   staged: StagedSample | null = null;
 
@@ -87,26 +91,46 @@ export class TrainingLoop {
     return this.lossFrom(this.model.forward(ex.input).logits, ex);
   }
 
-  /** Average loss over a set, without updating weights. */
-  private evalLoss(set: Example[]): number | null {
+  /**
+   * Average loss over (a capped prefix of) a set, without updating weights.
+   * The cap keeps periodic evaluation cheap on large datasets; the sets are
+   * pre-shuffled so a prefix is an unbiased sample.
+   */
+  private evalLoss(set: Example[], cap = 200): number | null {
     if (set.length === 0) return null;
+    const subset = set.slice(0, cap);
     let acc = 0;
-    for (const ex of set) acc += this.loss(ex).data;
-    return acc / set.length;
+    for (const ex of subset) acc += this.loss(ex).data;
+    return acc / subset.length;
   }
 
-  /** Bookkeeping after a sample's gradients have been applied. */
+  /**
+   * Bookkeeping after a sample's gradients have been applied. On epoch
+   * rollover, records an epoch-level point (mean train loss over the epoch's
+   * iterations + a test evaluation) so the per-epoch plot works in every
+   * stepping mode.
+   */
   private finishSample(trainLoss: number): void {
     this.cursor++;
     this.iteration++;
+    // Evaluate test loss periodically to keep the second series cheap.
+    const testLoss =
+      this.iteration % 10 === 0 ? this.evalLoss(this.data.test, 50) : null;
+    this.iterHistory.push({ x: this.iteration, trainLoss, testLoss });
+
     if (this.cursor >= this.data.train.length) {
       this.cursor = 0;
       this.epoch++;
+      const pts = this.iterHistory.slice(this.epochIterStart);
+      const mean =
+        pts.reduce((a, p) => a + p.trainLoss, 0) / Math.max(1, pts.length);
+      this.epochHistory.push({
+        x: this.epoch,
+        trainLoss: mean,
+        testLoss: this.evalLoss(this.data.test),
+      });
+      this.epochIterStart = this.iterHistory.length;
     }
-    // Evaluate test loss periodically to keep the second series cheap.
-    const testLoss =
-      this.iteration % 10 === 0 ? this.evalLoss(this.data.test) : null;
-    this.iterHistory.push({ x: this.iteration, trainLoss, testLoss });
   }
 
   /**
@@ -121,11 +145,11 @@ export class TrainingLoop {
   stepLayer(): void {
     if (this.data.train.length === 0) return;
 
-    if (!this.staged) {
+    if (!this.staged || this.staged.phase === "complete") {
       const sample = this.data.train[this.cursor];
       const result = this.model.forward(sample.input);
       const lossValue = this.lossFrom(result.logits, sample);
-      this.optim.zeroGrad();
+      this.model.zeroGrad();
       lossValue.backward();
       this.staged = {
         sample,
@@ -158,20 +182,35 @@ export class TrainingLoop {
     this.stepLayer();
   }
 
-  /** Train on the next single sample (whole iteration at once). */
+  /**
+   * Train on the next single sample (whole iteration at once). Leaves a
+   * fully-revealed "complete" snapshot for the network view, so the pipeline
+   * animates as samples fly by in iteration/epoch/continuous modes.
+   */
   stepIteration(): void {
     if (this.data.train.length === 0) return;
-    this.staged = null; // abandon any in-progress walkthrough
-    const ex = this.data.train[this.cursor];
-    const lossValue = this.loss(ex);
-    this.optim.zeroGrad();
+    const sample = this.data.train[this.cursor];
+    const result = this.model.forward(sample.input);
+    const lossValue = this.lossFrom(result.logits, sample);
+    this.model.zeroGrad();
     lossValue.backward();
     this.optim.step();
+    this.staged = {
+      sample,
+      trace: result.trace,
+      lossValue,
+      phase: "complete",
+      stage: PIPELINE_STAGES.length - 1,
+    };
     this.finishSample(lossValue.data);
   }
 
-  /** Train one full pass over the train set, recording an epoch-level point. */
+  /**
+   * Train one full pass over the train set. The epoch-level loss point is
+   * recorded by the rollover logic in finishSample.
+   */
   stepEpoch(): void {
+    if (this.data.train.length === 0) return;
     const startEpoch = this.epoch;
     let guard = 0;
     const maxSteps = this.data.train.length + 1;
@@ -179,8 +218,5 @@ export class TrainingLoop {
       this.stepIteration();
       guard++;
     }
-    const trainLoss = this.evalLoss(this.data.train) ?? 0;
-    const testLoss = this.evalLoss(this.data.test);
-    this.epochHistory.push({ x: this.epoch, trainLoss, testLoss });
   }
 }

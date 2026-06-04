@@ -61,6 +61,23 @@ function build(task: "copy" | "parens") {
   console.log(`parens: first20 avg loss=${first.toFixed(3)}  last20 avg loss=${last.toFixed(3)}`);
 }
 
+// --- 1c. multi-step modes: snapshots, epoch rollover points, stepEpoch ---
+{
+  const { loop, dataset } = build("copy");
+  loop.stepIteration();
+  if (loop.staged?.phase !== "complete") throw new Error("stepIteration should leave a 'complete' snapshot");
+  loop.stepEpoch();
+  if (loop.epoch !== 1) throw new Error(`stepEpoch should land on epoch 1, got ${loop.epoch}`);
+  if (loop.epochHistory.length !== 1) throw new Error(`expected 1 epoch point, got ${loop.epochHistory.length}`);
+  if (loop.iteration !== dataset.train.length) throw new Error("epoch should process the whole train set");
+  // A 'complete' snapshot then a layer step must start a fresh walkthrough.
+  loop.stepLayer();
+  if (loop.staged?.phase !== "forward" || loop.staged.stage !== 0) {
+    throw new Error("stepLayer after a complete snapshot should start at forward/0");
+  }
+  console.log(`multi-step: snapshot/epoch-rollover/stepEpoch OK (epoch pts=${loop.epochHistory.length})`);
+}
+
 // --- 2. staging machinery ---
 {
   const { loop } = build("copy");

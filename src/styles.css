@@ -431,6 +431,10 @@ body.resizing {
   color: #ff6b35;
 }
 
+.nv-pass.complete {
+  color: #2fbf71;
+}
+
 .nv-pass.idle {
   color: var(--muted);
   font-weight: 400;
