@@ -16,6 +16,7 @@ import { mountDatasetPanel } from "./ui/dataset-panel";
 import { mountLossPanel } from "./ui/loss-panel";
 import { mountNetworkView } from "./ui/network-view";
 import { mountSplitters } from "./ui/splitters";
+import { VERSION } from "./version";
 
 /** Patch keys that require tearing down and rebuilding model + dataset. */
 const REBUILD_KEYS = new Set<keyof AppState>([
@@ -34,6 +35,8 @@ const STEPS_PER_FRAME = 5;
 window.addEventListener("DOMContentLoaded", () => {
   const root = document.getElementById("app");
   if (!root) return;
+
+  document.title = `Transformer Playground - Version ${VERSION}`;
 
   // --- grid scaffold ---
   root.classList.add("grid");

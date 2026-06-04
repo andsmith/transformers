@@ -4,6 +4,7 @@
  */
 
 import type { AppContext } from "../state";
+import { VERSION } from "../version";
 import type { Task } from "../tasks/types";
 import { ALL_TASKS, TASK_SPECS } from "../tasks/types";
 import type { PEScheme } from "../model/embeddings";
@@ -32,7 +33,7 @@ export function mountTopPanel(host: HTMLElement, ctx: AppContext): PanelHandle {
   // --- title ---
   const title = document.createElement("h1");
   title.className = "app-title";
-  title.textContent = "Transformer Playground";
+  title.textContent = `Transformer Playground - Version ${VERSION}`;
   host.appendChild(title);
 
   const row = document.createElement("div");
