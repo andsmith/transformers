@@ -29,15 +29,68 @@ body {
 
 /* ---- page grid ---- */
 .grid {
+  /* Track sizes are CSS vars so the splitters can resize them on drag. */
+  --col-left: 340px; /* dataset column width (full-height, left side) */
+  --row-top: auto; /* top panel height */
+  --row-bottom: 210px; /* loss panel height */
+  --gutter: 10px; /* draggable separator thickness */
   display: grid;
-  grid-template-columns: 1fr 340px;
-  grid-template-rows: auto 1fr 210px;
+  grid-template-columns: var(--col-left) var(--gutter) 1fr;
+  grid-template-rows: var(--row-top) var(--gutter) 1fr var(--gutter) var(--row-bottom);
   grid-template-areas:
-    "top     top"
-    "center  dataset"
-    "loss    loss";
-  gap: 10px;
+    "top       top       top"
+    "hsplit-t  hsplit-t  hsplit-t"
+    "dataset   vsplit    center"
+    "dataset   vsplit    hsplit-b"
+    "dataset   vsplit    loss";
   padding: 10px;
+}
+
+/* ---- splitters (draggable separators) ---- */
+.splitter {
+  position: relative;
+  z-index: 5;
+}
+
+.splitter.vertical {
+  grid-area: vsplit;
+  cursor: col-resize;
+}
+
+.splitter.horizontal {
+  cursor: row-resize;
+}
+
+/* Centered grab handle, highlighted on hover/drag. */
+.splitter::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--line);
+  border-radius: 2px;
+  transition: background 0.12s;
+}
+
+.splitter.vertical::after {
+  width: 3px;
+  height: 40px;
+}
+
+.splitter.horizontal::after {
+  height: 3px;
+  width: 40px;
+}
+
+.splitter:hover::after,
+.splitter.dragging::after {
+  background: var(--accent);
+}
+
+/* Avoid text selection / cursor flicker while dragging a splitter. */
+body.resizing {
+  user-select: none;
 }
 
 .panel {
@@ -51,6 +104,11 @@ body {
 }
 
 /* ---- top panel ---- */
+.top-panel {
+  grid-area: top;
+  overflow: auto; /* scroll rather than clip if dragged shorter than content */
+}
+
 .app-title {
   font-size: 18px;
   margin: 0 0 8px;
@@ -127,6 +185,47 @@ body {
 .radio-btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+/* ---- radio cards (task selector) ---- */
+.radio-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(130px, 1fr));
+  gap: 6px;
+}
+
+.radio-card {
+  text-align: left;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  border-radius: 7px;
+  padding: 6px 9px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.radio-card:hover {
+  border-color: var(--accent);
+}
+
+.radio-card.selected {
+  border-color: var(--accent);
+  background: #eef4ff;
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.radio-card-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.radio-card-desc {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.25;
 }
 
 /* ---- sliders ---- */

@@ -46,6 +46,52 @@ export function makeRadioGroup<T extends string>(
   };
 }
 
+export interface RadioCardOption<T extends string> {
+  value: T;
+  title: string;
+  description: string;
+}
+
+/**
+ * A single-selection group where each option is a card showing a bold title
+ * and a short description (used for task selection).
+ */
+export function makeRadioCards<T extends string>(
+  options: RadioCardOption<T>[],
+  selected: T,
+  onChange: (value: T) => void,
+): RadioGroup<T> {
+  const el = document.createElement("div");
+  el.className = "radio-cards";
+  const cards = new Map<T, HTMLButtonElement>();
+
+  for (const opt of options) {
+    const card = document.createElement("button");
+    card.className = "radio-card";
+    card.classList.toggle("selected", opt.value === selected);
+
+    const title = document.createElement("div");
+    title.className = "radio-card-title";
+    title.textContent = opt.title;
+
+    const desc = document.createElement("div");
+    desc.className = "radio-card-desc";
+    desc.textContent = opt.description;
+
+    card.append(title, desc);
+    card.addEventListener("click", () => onChange(opt.value));
+    cards.set(opt.value, card);
+    el.appendChild(card);
+  }
+
+  return {
+    el,
+    set(value: T) {
+      for (const [v, card] of cards) card.classList.toggle("selected", v === value);
+    },
+  };
+}
+
 export interface SliderOpts {
   label: string;
   min: number;

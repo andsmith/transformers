@@ -13,6 +13,7 @@ import {
   makeButton,
   makeDropdown,
   makeFieldset,
+  makeRadioCards,
   makeRadioGroup,
   makeSlider,
   type Dropdown,
@@ -40,14 +41,16 @@ export function mountTopPanel(host: HTMLElement, ctx: AppContext): PanelHandle {
 
   // --- task ---
   const taskBox = makeFieldset("Task");
-  const taskRadios: RadioGroup<Task> = makeRadioGroup(
-    ALL_TASKS.map((t) => ({ value: t, label: TASK_SPECS[t].label, title: TASK_SPECS[t].description })),
+  const taskRadios: RadioGroup<Task> = makeRadioCards(
+    ALL_TASKS.map((t) => ({
+      value: t,
+      title: TASK_SPECS[t].label,
+      description: TASK_SPECS[t].description,
+    })),
     ctx.state.task,
     (t) => ctx.apply({ task: t }),
   );
-  const taskDesc = document.createElement("div");
-  taskDesc.className = "hint";
-  taskBox.append(taskRadios.el, taskDesc);
+  taskBox.append(taskRadios.el);
   row.appendChild(taskBox);
 
   // --- model ---
@@ -130,7 +133,6 @@ export function mountTopPanel(host: HTMLElement, ctx: AppContext): PanelHandle {
   function update(): void {
     const s = ctx.state;
     taskRadios.set(s.task);
-    taskDesc.textContent = TASK_SPECS[s.task].description;
     symbolsSlider.set(s.numSymbols);
     embedSlider.set(s.embedDim);
     peRadios.set(s.peScheme);

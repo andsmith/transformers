@@ -15,6 +15,7 @@ import { mountTopPanel, type PanelHandle } from "./ui/top-panel";
 import { mountDatasetPanel } from "./ui/dataset-panel";
 import { mountLossPanel } from "./ui/loss-panel";
 import { mountNetworkView } from "./ui/network-view";
+import { mountSplitters } from "./ui/splitters";
 
 /** Patch keys that require tearing down and rebuilding model + dataset. */
 const REBUILD_KEYS = new Set<keyof AppState>([
@@ -41,6 +42,7 @@ window.addEventListener("DOMContentLoaded", () => {
   const datasetHost = section("dataset");
   const lossHost = section("loss");
   root.append(topHost, centerHost, datasetHost, lossHost);
+  mountSplitters(root);
 
   function section(area: string): HTMLElement {
     const el = document.createElement("div");
