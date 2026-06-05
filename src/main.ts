@@ -313,6 +313,9 @@ window.addEventListener("DOMContentLoaded", () => {
       network.update();
       status.update();
       history.update();
+      // Keep the test-set marks and sort/out buttons current during runs
+      // (the list rebuild is memoized, so this is cheap between epochs).
+      dataset.update();
     }
     requestAnimationFrame(tick);
   };

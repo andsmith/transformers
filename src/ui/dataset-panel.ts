@@ -166,7 +166,7 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
   evalHint.className = "hint eval-hint";
   const outBtn = makeButton("out: y", () => {
     outMode = outMode === "y" ? "yhat" : "y";
-    invalidateList();
+    update();
   });
   outBtn.classList.add("sort-btn", "out-btn");
   sortRow.append(wrongBtn, firstBtn, evalHint, outBtn);
@@ -178,7 +178,7 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
     } else {
       sortDir = (sortDir === -1 ? 1 : -1) as 1 | -1;
     }
-    invalidateList();
+    update();
   }
 
   const testBox = makeFieldset("Test Set");
@@ -191,11 +191,6 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
   controls.className = "dataset-controls";
   controls.append(genBox, sizeBox, testBox);
   host.appendChild(controls);
-
-  /** Force the (memoized) example list to rebuild next update(). */
-  function invalidateList(): void {
-    lastListKey = "";
-  }
 
   function renderToken(id: number, wrong = false, tip = ""): HTMLElement {
     const s = ctx.state;

@@ -248,7 +248,7 @@ export function createInitialState(): AppState {
     seed,
     randomSeed: true,
     lossView: "iteration",
-    lossLogScale: false,
+    lossLogScale: true,
     lossGridLines: true,
     weightsCmap: "viridis",
     actsCmap: "bwr",
