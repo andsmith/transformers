@@ -68,6 +68,17 @@ export interface TimingPoint {
   sps: number;
 }
 
+/** Per-test-sample result from a post-epoch evaluation. */
+export interface TestEval {
+  index: number; // test sample id
+  pred: number[]; // argmax tokens (classification: [predLabel])
+  correct: boolean[]; // per position (classification: single element)
+  pTrue: number[]; // probability assigned to the TRUE token per position
+  wrong: number; // count of incorrect positions
+  firstWrong: number; // position of first wrong token (Infinity if none)
+  meanPTrue: number; // mean confidence on the truth (sort tie-breaker)
+}
+
 /** Per-epoch statistics recorded at each rollover. */
 export interface EpochStat {
   /** Epoch number (matches epochHistory.x). */
@@ -94,6 +105,9 @@ export interface LoopSnapshotData {
   timingHistory?: TimingPoint[];
   /** Optional (added in 0.0.29). */
   epochStats?: EpochStat[];
+  /** Optional (added in 0.0.30): last post-epoch detailed test eval. */
+  lastTestEval?: TestEval[];
+  lastTestEvalEpoch?: number;
 }
 
 export class TrainingLoop {
@@ -116,6 +130,9 @@ export class TrainingLoop {
   private rejCounter = { rejections: 0 };
   /** Test-set hits during the most recently completed epoch (-1 = none yet). */
   lastEpochRejections = -1;
+  /** Per-sample results of the most recent post-epoch test eval (null = none). */
+  lastTestEval: TestEval[] | null = null;
+  lastTestEvalEpoch = -1;
   /** In-progress per-stage walkthrough (null between samples). */
   staged: StagedSample | null = null;
 
@@ -163,6 +180,8 @@ export class TrainingLoop {
       cursor: this.cursor,
       epochIterStart: this.epochIterStart,
       rngState: this.rng.state,
+      lastTestEval: this.lastTestEval ?? undefined,
+      lastTestEvalEpoch: this.lastTestEvalEpoch,
     };
   }
 
@@ -187,6 +206,9 @@ export class TrainingLoop {
     this.rng.state = prev.rng.state;
     this.rejCounter.rejections = prev.rejCounter.rejections;
     this.lastEpochRejections = prev.lastEpochRejections;
+    // The test set may have changed — stale per-index marks would lie.
+    this.lastTestEval = null;
+    this.lastTestEvalEpoch = -1;
   }
 
   /** Restore a serialized continuation state (after weights are loaded). */
@@ -199,6 +221,8 @@ export class TrainingLoop {
     for (const p of h.timingHistory ?? []) this.timingHistory.push({ ...p });
     this.epochStats.length = 0;
     for (const p of h.epochStats ?? []) this.epochStats.push({ ...p });
+    this.lastTestEval = h.lastTestEval ?? null;
+    this.lastTestEvalEpoch = h.lastTestEvalEpoch ?? -1;
     this.iteration = h.iteration;
     this.epoch = h.epoch;
     this.cursor = h.cursor;
@@ -224,6 +248,67 @@ export class TrainingLoop {
   /** Compute the (autograd) loss for one example (fresh forward). */
   private loss(ex: Example): Value {
     return this.lossFrom(this.model.forward(ex.input).logits, ex);
+  }
+
+  /**
+   * Detailed evaluation over the full test set: per-sample predictions,
+   * correctness and confidence, plus the mean loss (numerically equal to the
+   * autograd loss). Used at each epoch rollover.
+   */
+  private evalTestDetailed(): { mean: number | null; evals: TestEval[] } {
+    const set = this.data.test;
+    if (set.length === 0) return { mean: null, evals: [] };
+    const classification = isClassification(this.data.task);
+    const evals: TestEval[] = [];
+    let lossSum = 0;
+
+    for (const ex of set) {
+      const logits = this.model.forward(ex.input).logits;
+      const pred: number[] = [];
+      const correct: boolean[] = [];
+      const pTrue: number[] = [];
+
+      if (classification) {
+        const p = 1 / (1 + Math.exp(-logits[0][0].data)); // P(label = 1)
+        const label = p >= 0.5 ? 1 : 0;
+        const truth = ex.output[0];
+        const pt = truth === 1 ? p : 1 - p;
+        pred.push(label);
+        correct.push(label === truth);
+        pTrue.push(pt);
+        lossSum += -Math.log(Math.max(pt, 1e-12));
+      } else {
+        let posLoss = 0;
+        for (let i = 0; i < logits.length; i++) {
+          const row = logits[i].map((v) => v.data);
+          const m = Math.max(...row);
+          const exps = row.map((z) => Math.exp(z - m));
+          const sum = exps.reduce((a, b) => a + b, 0);
+          const probs = exps.map((e) => e / sum);
+          let arg = 0;
+          for (let k = 1; k < probs.length; k++) if (probs[k] > probs[arg]) arg = k;
+          const truth = ex.output[i];
+          pred.push(arg);
+          correct.push(arg === truth);
+          pTrue.push(probs[truth]);
+          posLoss += -Math.log(Math.max(probs[truth], 1e-12));
+        }
+        lossSum += posLoss / logits.length;
+      }
+
+      let wrong = 0;
+      let firstWrong = Infinity;
+      for (let i = 0; i < correct.length; i++) {
+        if (!correct[i]) {
+          wrong++;
+          if (firstWrong === Infinity) firstWrong = i;
+        }
+      }
+      const meanPTrue = pTrue.reduce((a, b) => a + b, 0) / pTrue.length;
+      evals.push({ index: ex.index, pred, correct, pTrue, wrong, firstWrong, meanPTrue });
+    }
+
+    return { mean: lossSum / set.length, evals };
   }
 
   /**
@@ -268,10 +353,15 @@ export class TrainingLoop {
       const pts = this.iterHistory.slice(this.epochIterStart);
       const mean =
         pts.reduce((a, p) => a + p.trainLoss, 0) / Math.max(1, pts.length);
+      // Detailed test eval drives both the epoch's test-loss point and the
+      // per-sample marks shown in the dataset panel.
+      const detailed = this.evalTestDetailed();
+      this.lastTestEval = detailed.evals.length ? detailed.evals : null;
+      this.lastTestEvalEpoch = this.epoch;
       this.epochHistory.push({
         x: this.epoch,
         trainLoss: mean,
-        testLoss: this.evalLoss(this.data.test),
+        testLoss: detailed.mean,
       });
       this.epochIterStart = this.iterHistory.length;
     }

@@ -10,6 +10,7 @@ import type { AppContext, DisplayMode } from "../state";
 import { testSetMax, TRAIN_PER_EPOCH_MAX } from "../state";
 import type { Example } from "../tasks/types";
 import { isClassification } from "../tasks/types";
+import type { TestEval } from "../training/loop";
 import { MAX_SEQ_LEN_LIMIT, sampleSpaceSize, SPACE_HUGE } from "../tasks/datasets";
 import { tokenChar, tokenColor, MAX_VOCAB } from "../tasks/grammar";
 import {
@@ -139,39 +140,83 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
   sizeBox.classList.add("sub-box");
   sizeBox.append(trainSlider.el, testSlider.el, spaceHint, regenRow);
 
-  const controls = document.createElement("div");
-  controls.className = "dataset-controls";
-  controls.append(genBox, sizeBox);
-  host.appendChild(controls);
+  // --- Test Set box (its own sub-box, fills the remaining panel height) ---
+  // Sort state (panel-local). null = index order.
+  type SortKey = "wrong" | "first";
+  let sortKey: SortKey | null = null;
+  let sortDir: 1 | -1 = -1; // -1 = descending
+  let outMode: "y" | "yhat" = "y";
 
-  // --- examples (the fixed test set — the only samples with stable ids) ---
-  const listCap = document.createElement("div");
-  listCap.className = "caption";
-  listCap.textContent = "Test set (held out from training)";
-  host.appendChild(listCap);
-  const examplesEl = document.createElement("div");
-  examplesEl.className = "examples";
-  host.appendChild(examplesEl);
+  const sortRow = document.createElement("div");
+  sortRow.className = "sort-row";
+  const wrongBtn = makeButton("# wrong", () => cycleSort("wrong"));
+  const firstBtn = makeButton("1st error", () => cycleSort("first"));
+  wrongBtn.classList.add("sort-btn");
+  firstBtn.classList.add("sort-btn");
+  const evalHint = document.createElement("span");
+  evalHint.className = "hint eval-hint";
+  const outBtn = makeButton("out: y", () => {
+    outMode = outMode === "y" ? "yhat" : "y";
+    invalidateList();
+  });
+  outBtn.classList.add("sort-btn", "out-btn");
+  sortRow.append(wrongBtn, firstBtn, evalHint, outBtn);
 
-  function renderToken(id: number): HTMLElement {
-    const s = ctx.state;
-    if (s.display === "squares") {
-      const sq = document.createElement("span");
-      sq.className = "tok square";
-      sq.style.backgroundColor = tokenColor(id, s.numSymbols);
-      sq.title = tokenChar(s.task, id, s.numSymbols);
-      return sq;
+  function cycleSort(key: SortKey): void {
+    if (sortKey !== key) {
+      sortKey = key;
+      sortDir = -1; // first activation: descending
+    } else {
+      sortDir = (sortDir === -1 ? 1 : -1) as 1 | -1;
     }
-    const span = document.createElement("span");
-    span.className = "tok char";
-    span.textContent = tokenChar(s.task, id, s.numSymbols);
-    return span;
+    invalidateList();
   }
 
-  function renderSeq(ids: number[]): HTMLElement {
+  const testBox = makeFieldset("Test Set");
+  testBox.classList.add("sub-box", "test-set-box");
+  const examplesEl = document.createElement("div");
+  examplesEl.className = "examples";
+  testBox.append(sortRow, examplesEl);
+
+  const controls = document.createElement("div");
+  controls.className = "dataset-controls";
+  controls.append(genBox, sizeBox, testBox);
+  host.appendChild(controls);
+
+  /** Force the (memoized) example list to rebuild next update(). */
+  function invalidateList(): void {
+    lastListKey = "";
+  }
+
+  function renderToken(id: number, wrong = false, tip = ""): HTMLElement {
+    const s = ctx.state;
+    const el =
+      s.display === "squares"
+        ? (() => {
+            const sq = document.createElement("span");
+            sq.className = "tok square";
+            sq.style.backgroundColor = tokenColor(id, s.numSymbols);
+            return sq;
+          })()
+        : (() => {
+            const span = document.createElement("span");
+            span.className = "tok char";
+            span.textContent = tokenChar(s.task, id, s.numSymbols);
+            return span;
+          })();
+    if (wrong) el.classList.add("wrong");
+    el.title = tip || tokenChar(s.task, id, s.numSymbols);
+    return el;
+  }
+
+  /** Render a token sequence; `marks[i]` true outlines position i as wrong. */
+  function renderSeq(ids: number[], marks?: boolean[], pTrue?: number[]): HTMLElement {
     const row = document.createElement("span");
     row.className = "seq";
-    for (const id of ids) row.appendChild(renderToken(id));
+    ids.forEach((id, i) => {
+      const tip = pTrue ? `p(true)=${pTrue[i].toFixed(2)}` : "";
+      row.appendChild(renderToken(id, marks?.[i] ?? false, tip));
+    });
     return row;
   }
 
@@ -183,19 +228,37 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
     }
   }
 
-  /** Render every test sample as an indexed row, sorted by id. Transduction
-   *  shows input → output; classification shows input plus a
-   *  balanced/unbalanced tag. */
+  /** Render the test set, marking last-epoch correctness when available. */
   function renderList(list: Example[]): void {
     const classification = isClassification(ctx.state.task);
     const frag = document.createDocumentFragment();
+    const evalMap = new Map<number, TestEval>();
+    for (const e of ctx.state.loop.lastTestEval ?? []) evalMap.set(e.index, e);
+    const haveEval = evalMap.size > 0;
+    const showHat = outMode === "yhat" && haveEval;
 
-    const sorted = [...list].sort((a, b) => a.index - b.index);
+    // Order rows: by index unless an eval-based sort is active.
+    const sorted = [...list];
+    if (sortKey && haveEval) {
+      const keyOf = (ex: Example) => {
+        const ev = evalMap.get(ex.index);
+        if (!ev) return { primary: -1, conf: 0 };
+        const primary = sortKey === "wrong" ? ev.wrong : ev.firstWrong === Infinity ? 1e9 : ev.firstWrong;
+        return { primary, conf: ev.meanPTrue };
+      };
+      sorted.sort((a, b) => {
+        const ka = keyOf(a);
+        const kb = keyOf(b);
+        if (ka.primary !== kb.primary) return (ka.primary - kb.primary) * sortDir;
+        return (ka.conf - kb.conf) * sortDir; // tie-break by confidence
+      });
+    } else {
+      sorted.sort((a, b) => a.index - b.index);
+    }
 
-    // Fixed input-column width (max sequence in the list) so every arrow
-    // lines up vertically, in both chars and squares modes.
+    // Fixed input-column width so every arrow lines up vertically.
     const maxInLen = sorted.reduce((m, e) => Math.max(m, e.input.length), 1);
-    const perTok = ctx.state.display === "squares" ? 16 : 14; // token + gap px
+    const perTok = ctx.state.display === "squares" ? 16 : 14;
     const inColW = `${maxInLen * perTok}px`;
 
     // Column header: "Input → Output".
@@ -208,7 +271,7 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
     headIn.style.minWidth = inColW;
     head.append(headIdx, headIn);
     const headOut = document.createElement("span");
-    headOut.textContent = "Output";
+    headOut.textContent = showHat ? "ŷ" : "Output";
     if (classification) {
       headOut.className = "head-right";
       head.append(headOut);
@@ -221,27 +284,37 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
     frag.appendChild(head);
 
     for (const ex of sorted) {
+      const ev = evalMap.get(ex.index);
       const rowEl = document.createElement("div");
       rowEl.className = "example-row";
 
       const idx = document.createElement("span");
       idx.className = "ex-index";
+      if (ev) idx.classList.add(ev.wrong === 0 ? "all-right" : "has-wrong");
       idx.textContent = `#${ex.index}`;
       const inSeq = renderSeq(ex.input);
       inSeq.style.minWidth = inColW;
       rowEl.append(idx, inSeq);
 
       if (classification) {
-        const balanced = ex.output[0] === 1;
+        const trueLabel = ex.output[0] === 1;
+        const showLabel = showHat && ev ? ev.pred[0] === 1 : trueLabel;
         const tag = document.createElement("span");
-        tag.className = `class-tag ${balanced ? "balanced" : "unbalanced"}`;
-        tag.textContent = balanced ? "balanced" : "unbalanced";
+        const ok = ev ? ev.correct[0] : true;
+        tag.className =
+          `class-tag ${showLabel ? "balanced" : "unbalanced"}` +
+          (ev ? (ok ? " ok" : " bad") : "");
+        tag.textContent =
+          (showLabel ? "balanced" : "unbalanced") + (ev ? (ok ? " ✓" : " ✗") : "");
+        if (ev) tag.title = `p(true)=${ev.pTrue[0].toFixed(2)}`;
         rowEl.append(tag);
       } else {
         const arrow = document.createElement("span");
         arrow.className = "arrow";
         arrow.textContent = "→";
-        rowEl.append(arrow, renderSeq(ex.output));
+        const outIds = showHat && ev ? ev.pred : ex.output;
+        const marks = ev ? ev.correct.map((c) => !c) : undefined;
+        rowEl.append(arrow, renderSeq(outIds, marks, ev?.pTrue));
       }
       frag.appendChild(rowEl);
     }
@@ -286,7 +359,21 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
     randomCheck.set(s.randomSeed);
     renderVocab();
 
-    const listKey = s.display;
+    // Sort controls: enabled only once an epoch eval exists.
+    const haveEval = !!s.loop.lastTestEval;
+    wrongBtn.disabled = !haveEval;
+    firstBtn.disabled = !haveEval;
+    outBtn.disabled = !haveEval;
+    const arrow = (k: typeof sortKey) =>
+      sortKey === k ? (sortDir === -1 ? " ▼" : " ▲") : "";
+    wrongBtn.textContent = `# wrong${arrow("wrong")}`;
+    wrongBtn.classList.toggle("active", sortKey === "wrong");
+    firstBtn.textContent = `1st error${arrow("first")}`;
+    firstBtn.classList.toggle("active", sortKey === "first");
+    outBtn.textContent = outMode === "yhat" ? "out: ŷ" : "out: y";
+    evalHint.textContent = haveEval ? `eval @ epoch ${s.loop.lastTestEvalEpoch}` : "no eval yet";
+
+    const listKey = `${s.display}|${sortKey ?? ""}|${sortDir}|${outMode}|${s.loop.lastTestEvalEpoch}`;
     if (s.dataset !== lastDataset || listKey !== lastListKey) {
       renderList(s.dataset.test);
       lastDataset = s.dataset;

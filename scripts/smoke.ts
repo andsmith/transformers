@@ -124,6 +124,38 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
   console.log("staging: forward 0..7, backward 7..0, finalize+restart OK");
 }
 
+// --- 2c. detailed test eval populated at epoch rollover ---
+{
+  const { loop, model, dataset } = build("copy");
+  if (loop.lastTestEval !== null) throw new Error("no eval before first epoch");
+  loop.stepEpoch();
+  const ev = loop.lastTestEval;
+  if (!ev) throw new Error("lastTestEval missing after epoch");
+  if (ev.length !== dataset.test.length) throw new Error("eval count != test size");
+  // wrong-count must match an independent argmax recompute for a few samples.
+  for (const e of ev.slice(0, 3)) {
+    const ex = dataset.test.find((t) => t.index === e.index)!;
+    const logits = model.forward(ex.input).logits;
+    let wrong = 0;
+    for (let i = 0; i < logits.length; i++) {
+      const row = logits[i].map((v) => v.data);
+      let arg = 0;
+      for (let k = 1; k < row.length; k++) if (row[k] > row[arg]) arg = k;
+      if (arg !== ex.output[i]) wrong++;
+    }
+    if (wrong !== e.wrong) throw new Error(`wrong mismatch #${e.index}: ${wrong} vs ${e.wrong}`);
+  }
+  // epoch test-loss point equals the detailed-eval mean (−log p_true).
+  const pt = loop.epochHistory[loop.epochHistory.length - 1].testLoss!;
+  const meanFromEval =
+    ev.reduce((a, e) => a + e.pTrue.reduce((s, p) => s - Math.log(Math.max(p, 1e-12)), 0) / e.pTrue.length, 0) /
+    ev.length;
+  if (Math.abs(pt - meanFromEval) > 1e-9) {
+    throw new Error(`epoch testLoss ${pt} != eval mean ${meanFromEval}`);
+  }
+  console.log(`detailed test eval: ${ev.length} samples, wrong-counts verified`);
+}
+
 // --- 3. save/load round-trip: identical continuation (weights + history + rng) ---
 {
   const a = build("copy");

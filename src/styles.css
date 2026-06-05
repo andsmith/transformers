@@ -610,8 +610,48 @@ body.resizing {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--line);
+  flex: 1;
+  min-height: 0;
+}
+
+/* The Test Set box fills the rest of the panel; its list scrolls. */
+.test-set-box {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Sort/output controls above the Input → Output header. */
+.sort-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sort-btn {
+  padding: 2px 8px;
+  font-size: calc(var(--ui-font-px) - 1px);
+  background: #fff;
+  color: var(--ink);
+  border-color: var(--line);
+}
+
+.sort-btn.active {
+  background: #eef4ff;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.sort-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.out-btn {
+  margin-left: auto;
+}
+
+.eval-hint {
+  margin-left: 4px;
 }
 
 /* A row split 40/60 (slider | companion control), visually separated. */
@@ -703,6 +743,18 @@ body.resizing {
   display: inline-block;
 }
 
+/* A position the model got wrong in the last test eval. */
+.tok.wrong {
+  outline: 2px solid #e0413a;
+  outline-offset: -1px;
+  border-radius: 2px;
+}
+
+.tok.char.wrong {
+  color: #e0413a;
+  font-weight: 700;
+}
+
 .arrow {
   color: var(--muted);
 }
@@ -713,6 +765,15 @@ body.resizing {
   font-size: calc(var(--ui-font-px) - 1px);
   min-width: 34px;
   text-align: right;
+}
+
+/* Index color encodes whole-sample correctness in the last eval. */
+.ex-index.all-right {
+  color: #1f7a4d;
+}
+
+.ex-index.has-wrong {
+  color: #e0413a;
 }
 
 .class-tag {
@@ -731,6 +792,14 @@ body.resizing {
 .class-tag.unbalanced {
   color: #a13a2a;
   background: #fbe7e3;
+}
+
+.class-tag.ok {
+  outline: 1.5px solid #1f7a4d;
+}
+
+.class-tag.bad {
+  outline: 1.5px solid #e0413a;
 }
 
 /* ---- center / network view ---- */
