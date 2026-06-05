@@ -60,6 +60,8 @@ export function mountRunControls(host: HTMLElement, ctx: AppContext): PanelHandl
       { value: "layer", label: "step 1 layer" },
       { value: "iteration", label: "step 1 iteration" },
       { value: "epoch", label: "step 1 epoch" },
+      { value: "run", label: "Run continuously" },
+      { value: "epochs", label: "Run by epochs (fast)" },
     ],
     ctx.state.stepGranularity,
     (g) => ctx.apply({ stepGranularity: g }),
@@ -184,11 +186,19 @@ export function mountRunControls(host: HTMLElement, ctx: AppContext): PanelHandl
 
   host.append(left, right);
 
+  const speedInput = speedSlider.el.querySelector("input")!;
+
   function update(): void {
     const s = ctx.state;
     granDropdown.set(s.stepGranularity);
     goBtn.textContent = s.running ? "Stop" : "Go";
+    goBtn.classList.toggle("btn-stop", s.running);
+    goBtn.classList.toggle("btn-go", !s.running);
     speedSlider.set(s.speed);
+    // The continuous modes are unthrottled — Speed doesn't apply.
+    const continuous = s.stepGranularity === "run" || s.stepGranularity === "epochs";
+    speedInput.disabled = continuous;
+    speedSlider.el.classList.toggle("disabled", continuous);
     counters.textContent = `iter ${s.loop.iteration} · epoch ${s.loop.epoch}`;
     constSizeCheck.set(s.vizConstantSize);
   }

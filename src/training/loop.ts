@@ -16,8 +16,12 @@ import { generateTrainExample } from "../tasks/datasets";
 import { isClassification } from "../tasks/types";
 import type { Dataset, Example } from "../tasks/types";
 
-/** What one Step click advances; continuity comes from Tick mode (Go + Speed). */
-export type StepGranularity = "layer" | "iteration" | "epoch";
+/**
+ * What one Step click advances. The "step 1 ..." modes run on the Speed-paced
+ * tick when Go is active; "run" (continuous iterations) and "epochs" (fastest,
+ * UI refreshed once per epoch) are unthrottled — Speed does not apply.
+ */
+export type StepGranularity = "layer" | "iteration" | "epoch" | "run" | "epochs";
 /** "complete" = a whole-sample step (iteration/epoch/run) finished training
  *  this sample; the viz shows the full pipeline, no active stage. */
 export type PassPhase = "forward" | "backward" | "complete";

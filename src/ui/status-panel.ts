@@ -51,7 +51,7 @@ export function mountStatusPanel(host: HTMLElement, ctx: AppContext): PanelHandl
     const loop = s.loop;
     const st = loop.staged;
 
-    const byEpoch = s.stepGranularity === "epoch";
+    const byEpoch = s.stepGranularity === "epoch" || s.stepGranularity === "epochs";
     title.textContent = byEpoch
       ? `Status - epoch ${loop.epoch}`
       : `Status - epoch ${loop.epoch} - iter ${loop.iteration}`;

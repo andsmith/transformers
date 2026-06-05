@@ -133,9 +133,10 @@ window.addEventListener("DOMContentLoaded", () => {
 
   /** One Step click's worth of computation, at the chosen granularity. */
   function doOneStep(): void {
-    if (state.stepGranularity === "layer") state.loop.stepLayer();
-    else if (state.stepGranularity === "iteration") state.loop.stepIteration();
-    else state.loop.stepEpoch();
+    const g = state.stepGranularity;
+    if (g === "layer") state.loop.stepLayer();
+    else if (g === "iteration" || g === "run") state.loop.stepIteration();
+    else state.loop.stepEpoch(); // "epoch" and "epochs"
   }
 
   // Remembered loss-row height so expanding restores the user's chosen size.
@@ -248,11 +249,35 @@ window.addEventListener("DOMContentLoaded", () => {
 
     let redraw = true;
     if (state.running) {
-      if (state.speed >= 100) {
-        // Unthrottled "max" per granularity.
-        if (state.stepGranularity === "layer") {
+      const gran = state.stepGranularity;
+      if (gran === "run") {
+        // Continuous iterations, unthrottled (Speed does not apply).
+        const t0 = performance.now();
+        let steps = 0;
+        while (
+          performance.now() - t0 < RUN_FRAME_BUDGET_MS &&
+          steps < RUN_MAX_STEPS_PER_FRAME
+        ) {
+          state.loop.stepIteration();
+          steps++;
+        }
+        run.update();
+      } else if (gran === "epochs") {
+        // Fastest: no per-sample snapshots; UI refreshed only per epoch.
+        const t0 = performance.now();
+        while (performance.now() - t0 < EPOCHS_FRAME_BUDGET_MS) {
+          state.loop.stepIteration(false);
+        }
+        redraw = state.loop.epoch !== lastDrawnEpoch;
+        if (redraw) {
+          lastDrawnEpoch = state.loop.epoch;
+          run.update();
+        }
+      } else if (state.speed >= 100) {
+        // Unthrottled "max" per step granularity.
+        if (gran === "layer") {
           state.loop.stepLayer(); // one pipeline stage per frame
-        } else if (state.stepGranularity === "iteration") {
+        } else if (gran === "iteration") {
           const t0 = performance.now();
           let steps = 0;
           while (
@@ -263,15 +288,9 @@ window.addEventListener("DOMContentLoaded", () => {
             steps++;
           }
         } else {
-          // Fast epochs: no per-sample snapshots; redraw only per epoch.
-          const t0 = performance.now();
-          while (performance.now() - t0 < EPOCHS_FRAME_BUDGET_MS) {
-            state.loop.stepIteration(false);
-          }
-          redraw = state.loop.epoch !== lastDrawnEpoch;
-          if (redraw) lastDrawnEpoch = state.loop.epoch;
+          state.loop.stepEpoch(); // one full epoch per frame
         }
-        if (redraw) run.update();
+        run.update();
       } else {
         // Timed ticks: 0 -> 0.5 Hz ... 99 -> 5 Hz (log scale).
         const hz = 0.5 * Math.pow(10, state.speed / 99);
