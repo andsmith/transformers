@@ -70,7 +70,7 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
   const countSlider: Slider = makeSlider({
     label: "Examples",
     min: 10,
-    max: 1000,
+    max: 5000,
     step: 10,
     value: ctx.state.numExamples,
     onInput: (v) => ctx.apply({ numExamples: v }),
@@ -200,7 +200,7 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
     examplesEl.appendChild(frag);
   }
 
-  // The example list can be large (up to 1000 rows), so only rebuild it when
+  // The example list can be large (up to 5000 rows), so only rebuild it when
   // something that affects it actually changes.
   let lastDataset = ctx.state.dataset;
   let lastListKey = "";

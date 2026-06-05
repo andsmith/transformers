@@ -29,7 +29,7 @@ export interface AppState {
 
   // --- dataset controls ---
   display: DisplayMode;
-  numExamples: number; // 10..1000
+  numExamples: number; // 10..5000
   maxSeqLen: number; // longest generated sequence
   fixedLength: boolean; // if true, every sequence is exactly maxSeqLen
   trainTestSplit: number; // 0..0.5 (fraction held out for test)
