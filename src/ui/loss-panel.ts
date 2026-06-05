@@ -130,6 +130,42 @@ export function mountLossPanel(host: HTMLElement, ctx: AppContext): PanelHandle 
       cssCtx.fillText(fmt(v), 4, yOf(v) + 3);
     }
 
+    // Epoch boundaries (per-iteration view): thin dashed gray verticals, plus
+    // floating "epoch k" labels when the epochs are wide enough to fit them.
+    if (ctx.state.lossView === "iteration") {
+      const trainLen = ctx.state.dataset.train.length;
+      if (trainLen > 0) {
+        const lineShade = "#b6c0cb";
+        cssCtx.strokeStyle = lineShade;
+        cssCtx.lineWidth = 1;
+        cssCtx.setLineDash([3, 3]);
+        for (let k = 1; k * trainLen <= maxX; k++) {
+          const bx = xOf(k * trainLen);
+          if (bx > pad.l && bx < pad.l + plotW) {
+            cssCtx.beginPath();
+            cssCtx.moveTo(bx, pad.t);
+            cssCtx.lineTo(bx, pad.t + plotH);
+            cssCtx.stroke();
+          }
+        }
+        cssCtx.setLineDash([]);
+
+        const epochPxW = (trainLen / spanX) * plotW;
+        if (epochPxW >= 48) {
+          cssCtx.fillStyle = lineShade;
+          cssCtx.font = "10px system-ui, sans-serif";
+          cssCtx.textAlign = "center";
+          for (let k = 0; k * trainLen <= maxX; k++) {
+            const cx = xOf((k + 0.5) * trainLen);
+            if (cx > pad.l && cx < pad.l + plotW) {
+              cssCtx.fillText(`epoch ${k}`, cx, pad.t + 9);
+            }
+          }
+          cssCtx.textAlign = "left";
+        }
+      }
+    }
+
     const plotLine = (color: string, pick: (p: LossPoint) => number | null) => {
       cssCtx.strokeStyle = color;
       cssCtx.lineWidth = 1.5;
