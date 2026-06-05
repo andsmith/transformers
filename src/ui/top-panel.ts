@@ -123,7 +123,7 @@ export function mountTopPanel(host: HTMLElement, ctx: AppContext): PanelHandle {
   learnBox.append(lrSlider.el);
   row.appendChild(learnBox);
 
-  // --- colormaps ---
+  // --- colormaps (side by side) ---
   const cmapBox = makeFieldset("Colormaps");
   const cmapOptions = (names: string[]) =>
     names.map((n) => ({ value: n, label: n }));
@@ -137,14 +137,22 @@ export function mountTopPanel(host: HTMLElement, ctx: AppContext): PanelHandle {
     ctx.state.actsCmap,
     (n) => ctx.apply({ actsCmap: n }),
   );
-  cmapBox.append(
+  const cmapRow = document.createElement("div");
+  cmapRow.className = "fieldset-row";
+  cmapRow.append(
     label("Weights", weightsCmapDd.el),
     label("Activations", actsCmapDd.el),
   );
+  cmapBox.append(cmapRow);
   row.appendChild(cmapBox);
 
   function update(): void {
     const s = ctx.state;
+    const pe = s.peScheme === "sinusoidal" ? "positional" : "learned";
+    title.textContent =
+      `Transformer Playground - Version ${VERSION} - task: ${s.task} - ` +
+      `|V| = ${s.numSymbols} - Model(D_embed=${s.embedDim}, P_embed=${pe}, ` +
+      `FF-layers=${s.numOutputLayers})`;
     host.classList.toggle("collapsed", s.topCollapsed);
     row.style.display = s.topCollapsed ? "none" : "";
     collapseBtn.textContent = s.topCollapsed ? "▼ controls" : "▲ hide";

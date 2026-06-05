@@ -25,6 +25,9 @@ export interface MatrixOpts {
   kind: "weights" | "acts";
   /** Read .grad instead of .data (Value matrices only). */
   grad?: boolean;
+  /** Draw as a flat light-gray placeholder (stage not yet reached) — the
+   *  matrix keeps its footprint but shows no values. */
+  ghost?: boolean;
   /** Small caption centered under the matrix. */
   title?: string;
   /** Row indices to outline (e.g. embedding-table rows used by the sample). */
@@ -71,23 +74,33 @@ export function drawMatrix(
   const h = rows * cellH;
   const top = y + BADGE_H;
 
-  // Normalization: sequential min..max for forward weights; symmetric about 0
-  // for activations and for any gradient view.
-  const { min, max } = matrixRange(data);
-  const diverging = opts.kind === "acts" || !!opts.grad;
-  const absMax = Math.max(Math.abs(min), Math.abs(max));
+  if (opts.ghost) {
+    // Flat placeholder: shape without values.
+    g.fillStyle = "#e6ebf1";
+    g.fillRect(x, top, w, h);
+  } else {
+    // Normalization: sequential min..max for forward weights; symmetric about
+    // 0 for activations and for any gradient view.
+    const { min, max } = matrixRange(data);
+    const diverging = opts.kind === "acts" || !!opts.grad;
+    const absMax = Math.max(Math.abs(min), Math.abs(max));
 
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const v = data[r][c];
-      const t = diverging ? normDiv(v, absMax) : normSeq(v, min, max);
-      g.fillStyle = cmapColor(opts.cmap, t);
-      g.fillRect(x + c * cellW, top + r * cellH, cellW, cellH);
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const v = data[r][c];
+        const t = diverging ? normDiv(v, absMax) : normSeq(v, min, max);
+        g.fillStyle = cmapColor(opts.cmap, t);
+        g.fillRect(x + c * cellW, top + r * cellH, cellW, cellH);
+      }
     }
   }
 
-  // Frame + badge make the kind unmistakable.
-  const frame = opts.kind === "weights" ? WEIGHTS_FRAME : ACTS_FRAME;
+  // Frame + badge make the kind unmistakable (muted when ghosted).
+  const frame = opts.ghost
+    ? "#c4cdd6"
+    : opts.kind === "weights"
+      ? WEIGHTS_FRAME
+      : ACTS_FRAME;
   g.strokeStyle = frame;
   g.lineWidth = 1.5;
   g.strokeRect(x - 0.75, top - 0.75, w + 1.5, h + 1.5);
@@ -100,7 +113,7 @@ export function drawMatrix(
   g.fillText(badge, x, y + BADGE_H - 3);
 
   // Row outlines (e.g. which embedding rows this sample uses).
-  if (opts.outlineRows && opts.outlineRows.length > 0) {
+  if (!opts.ghost && opts.outlineRows && opts.outlineRows.length > 0) {
     g.strokeStyle = "#111";
     g.lineWidth = 1;
     for (const r of opts.outlineRows) {

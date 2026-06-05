@@ -7,11 +7,17 @@
  *   Input | Embeddings | Embed Sum | Q·K·V | Attention | Weighted Sum |
  *   Residual | Output
  *
- * The forward pass reveals columns left→right; the backpropagation pass sweeps
- * right→left switching each column to gradient heatmaps (∇ badges). A bar of
- * per-stage rectangles at the bottom marks the active stage (green). Weight
- * matrices and activations are visually distinct (frame colors + W/A badges,
- * separate user-selectable colormaps).
+ * Nothing is ever erased while stepping: weight matrices are always drawn
+ * (values normally, ∇ heatmaps while the backward sweep covers them) and
+ * activations of stages the forward pass hasn't reached yet are drawn as flat
+ * light-gray placeholders. A bar of per-stage rectangles at the bottom marks
+ * the active stage (green), with draggable "<>" handles between the bars to
+ * resize column widths.
+ *
+ * Column widths are always laid out for the maximum sequence length, so the
+ * layout (and any user resizing) stays stable across samples of different
+ * lengths; the "constant-size" option additionally stretches activations
+ * vertically/horizontally to fill that footprint.
  */
 
 import type { AppContext } from "../state";
@@ -36,9 +42,18 @@ const COL_GAP = 16;
 const MAT_FIXED_H = 22; // badge row + title row per matrix (see viz/draw.ts)
 const GLYPH_ROW_H = 13; // "+" / "=" rows between stacked matrices
 const ROW_GAP = 9; // vertical gap between sub-rows (QKV, embeddings)
+const MIN_COL_W = 30; // resize floor
+const HANDLE_HIT = 10; // px hit radius around a <> handle
 
 const ACTIVE_GREEN = "#2fbf71";
 const IDLE_GRAY = "#c9d2dc";
+
+interface DrawMode {
+  /** Show gradients instead of values (backward sweep covers this column). */
+  grad: boolean;
+  /** Stage not yet reached: activations as light-gray placeholders. */
+  ghost: boolean;
+}
 
 interface ColumnSpec {
   /** Natural size: cells scale with the global cell size; fixed parts don't. */
@@ -46,14 +61,21 @@ interface ColumnSpec {
   fixedW: number;
   hCells: number;
   fixedH: number;
-  draw(g: CanvasRenderingContext2D, x: number, y: number, cell: number, grad: boolean): void;
+  draw(
+    g: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    cellW: number,
+    cellH: number,
+    mode: DrawMode,
+  ): void;
 }
 
 export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandle {
   host.classList.add("panel", "network-view");
   host.innerHTML = "";
 
-  // --- DOM header (top-left; the Run overlay occupies the top-right) ---
+  // --- DOM header (top-left) ---
   const header = document.createElement("div");
   header.className = "nv-header";
   const titleEl = document.createElement("div");
@@ -67,6 +89,67 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
   canvas.className = "network-canvas";
   host.appendChild(canvas);
   const g = canvas.getContext("2d")!;
+
+  // --- column resizing state ---
+  /** Per-column width adjustment in px (boundary drags transfer width). */
+  const colDelta: number[] = PIPELINE_STAGES.map(() => 0);
+  /** Last drawn layout, for handle hit-testing. */
+  let lastLayout: { x: number; w: number }[] = [];
+  let indicatorTop = 0;
+  let resizeDrag: {
+    boundary: number; // between columns [boundary] and [boundary+1]
+    startX: number;
+    dl: number;
+    dr: number;
+    wl: number;
+    wr: number;
+  } | null = null;
+
+  function boundaryAt(px: number, py: number): number | null {
+    if (lastLayout.length === 0) return null;
+    if (py < indicatorTop - 8 || py > indicatorTop + INDICATOR_H + 8) return null;
+    for (let i = 0; i < lastLayout.length - 1; i++) {
+      const bx = lastLayout[i].x + lastLayout[i].w + COL_GAP / 2;
+      if (Math.abs(px - bx) <= HANDLE_HIT) return i;
+    }
+    return null;
+  }
+
+  canvas.addEventListener("pointerdown", (e) => {
+    const b = boundaryAt(e.offsetX, e.offsetY);
+    if (b === null) return;
+    resizeDrag = {
+      boundary: b,
+      startX: e.offsetX,
+      dl: colDelta[b],
+      dr: colDelta[b + 1],
+      wl: lastLayout[b].w,
+      wr: lastLayout[b + 1].w,
+    };
+    canvas.setPointerCapture(e.pointerId);
+  });
+
+  canvas.addEventListener("pointermove", (e) => {
+    if (resizeDrag) {
+      const d = resizeDrag;
+      const dx = Math.max(
+        -(d.wl - MIN_COL_W),
+        Math.min(d.wr - MIN_COL_W, e.offsetX - d.startX),
+      );
+      colDelta[d.boundary] = d.dl + dx;
+      colDelta[d.boundary + 1] = d.dr - dx;
+      return;
+    }
+    canvas.style.cursor = boundaryAt(e.offsetX, e.offsetY) !== null ? "col-resize" : "default";
+  });
+
+  const endResize = (e: PointerEvent) => {
+    if (!resizeDrag) return;
+    resizeDrag = null;
+    canvas.releasePointerCapture?.(e.pointerId);
+  };
+  canvas.addEventListener("pointerup", endResize);
+  canvas.addEventListener("pointercancel", endResize);
 
   function softmaxNums(row: number[]): number[] {
     const m = Math.max(...row);
@@ -89,12 +172,17 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
     const L = model.embeddings.posTable.length;
     const classification = isClassification(s.task);
     const outUnits = model.outputUnits;
+    const twoLayer = model.wFF !== null;
 
-    // Layout sequence length: with constant-size on, columns are sized for
-    // the maximum sequence length and n-row matrices stretch vertically to
-    // fill that fixed footprint (cell aspect ratio changes, layout doesn't).
-    const N = s.vizConstantSize ? Math.max(n, s.maxSeqLen) : n;
-    const rowH = (cell: number) => (cell * N) / n;
+    // Width layout is ALWAYS sized for the maximum sequence length, so the
+    // columns (and the user's resize adjustments) stay put across samples.
+    const NW = Math.max(n, s.maxSeqLen);
+    // Heights stretch to the max footprint only with constant-size on.
+    const NH = s.vizConstantSize ? NW : n;
+    const rowH = (ch: number) => (ch * NH) / n;
+    // Horizontal stretch for seq-wide matrices (attention): fill the NW-wide
+    // slot when constant-size is on, else draw at natural width.
+    const colW = (cw: number) => (s.vizConstantSize ? (cw * NW) / n : cw);
 
     const tokTable = model.embeddings.tokenTable;
     const posTable = model.embeddings.posTable;
@@ -105,30 +193,30 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
     const input: ColumnSpec = {
       wCells: 1 + V,
       fixedW: 8,
-      hCells: N,
+      hCells: NH,
       fixedH: MAT_FIXED_H,
-      draw(gc, x, y, cell, _grad) {
-        // Tokens (one-hot has no gradient; this column always shows values).
-        const rh = rowH(cell);
+      draw(gc, x, y, cw, ch, mode) {
+        const rh = rowH(ch);
         const top = y + 11; // align with the one-hot's cell rows (badge offset)
         for (let i = 0; i < n; i++) {
           const id = st.sample.input[i];
           if (s.display === "squares") {
             gc.fillStyle = tokenColor(id, V);
-            gc.fillRect(x, top + i * rh + 1, cell - 1, rh - 2);
+            gc.fillRect(x, top + i * rh + 1, cw - 1, rh - 2);
           } else {
             gc.fillStyle = "#1f2a36";
-            gc.font = `${Math.max(8, cell - 3)}px ui-monospace, monospace`;
+            gc.font = `${Math.max(8, Math.min(cw, ch) - 3)}px ui-monospace, monospace`;
             gc.textAlign = "center";
             gc.textBaseline = "middle";
-            gc.fillText(tokenChar(s.task, id, V), x + cell / 2, top + i * rh + rh / 2);
+            gc.fillText(tokenChar(s.task, id, V), x + cw / 2, top + i * rh + rh / 2);
             gc.textAlign = "left";
             gc.textBaseline = "alphabetic";
           }
         }
-        drawMatrix(gc, x + cell + 8, y, cell, rh, trace.oneHot, {
+        drawMatrix(gc, x + cw + 8, y, cw, rh, trace.oneHot, {
           cmap: aCmap,
           kind: "acts",
+          ghost: mode.ghost,
           title: `one-hot (${n}×${V})`,
         });
       },
@@ -140,18 +228,18 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
       fixedW: 0,
       hCells: V + L,
       fixedH: 2 * MAT_FIXED_H + ROW_GAP,
-      draw(gc, x, y, cell, grad) {
-        const a = drawMatrix(gc, x, y, cell, cell, tokTable, {
+      draw(gc, x, y, cw, ch, mode) {
+        const a = drawMatrix(gc, x, y, cw, ch, tokTable, {
           cmap: wCmap,
           kind: "weights",
-          grad,
+          grad: mode.grad,
           title: `token table (${V}×${d})`,
           outlineRows: usedTokenRows,
         });
-        drawMatrix(gc, x, y + a.h + ROW_GAP, cell, cell, posTable, {
+        drawMatrix(gc, x, y + a.h + ROW_GAP, cw, ch, posTable, {
           cmap: wCmap,
           kind: "weights",
-          grad,
+          grad: mode.grad,
           title: `position table (${L}×${d})`,
           outlineRows: usedPosRows,
         });
@@ -169,21 +257,22 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
     ): ColumnSpec => ({
       wCells: d,
       fixedW: 0,
-      hCells: 3 * N,
+      hCells: 3 * NH,
       fixedH: 3 * MAT_FIXED_H + 2 * GLYPH_ROW_H,
-      draw(gc, x, y, cell, grad) {
-        const w = d * cell;
-        const rh = rowH(cell);
+      draw(gc, x, y, cw, ch, mode) {
+        const w = d * cw;
+        const rh = rowH(ch);
+        const opts = { cmap: aCmap, kind: "acts" as const, grad: mode.grad, ghost: mode.ghost };
         let yy = y;
-        const s1 = drawMatrix(gc, x, yy, cell, rh, m1(), { cmap: aCmap, kind: "acts", grad, title: t1 });
+        const s1 = drawMatrix(gc, x, yy, cw, rh, m1(), { ...opts, title: t1 });
         yy += s1.h;
         drawGlyph(gc, x + w / 2, yy + GLYPH_ROW_H / 2, "+");
         yy += GLYPH_ROW_H;
-        const s2 = drawMatrix(gc, x, yy, cell, rh, m2(), { cmap: aCmap, kind: "acts", grad, title: t2 });
+        const s2 = drawMatrix(gc, x, yy, cw, rh, m2(), { ...opts, title: t2 });
         yy += s2.h;
         drawGlyph(gc, x + w / 2, yy + GLYPH_ROW_H / 2, "=");
         yy += GLYPH_ROW_H;
-        drawMatrix(gc, x, yy, cell, rh, m3(), { cmap: aCmap, kind: "acts", grad, title: t3 });
+        drawMatrix(gc, x, yy, cw, rh, m3(), { ...opts, title: t3 });
       },
     });
 
@@ -207,49 +296,47 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
     const qkv: ColumnSpec = {
       wCells: 2 * d,
       fixedW: 8,
-      hCells: 3 * Math.max(d, N),
+      hCells: 3 * Math.max(d, NH),
       fixedH: 3 * MAT_FIXED_H + 2 * ROW_GAP,
-      draw(gc, x, y, cell, grad) {
+      draw(gc, x, y, cw, ch, mode) {
         let yy = y;
         for (const [name, w, act] of qkvRows) {
-          const rowCells = Math.max(d, N);
-          const a = drawMatrix(gc, x, yy, cell, cell, w, {
+          const rowCells = Math.max(d, NH);
+          const a = drawMatrix(gc, x, yy, cw, ch, w, {
             cmap: wCmap,
             kind: "weights",
-            grad,
+            grad: mode.grad,
             title: `W_${name} (${d}×${d})`,
           });
-          drawMatrix(gc, x + a.w + 8, yy, cell, rowH(cell), act, {
+          drawMatrix(gc, x + a.w + 8, yy, cw, rowH(ch), act, {
             cmap: aCmap,
             kind: "acts",
-            grad,
+            grad: mode.grad,
+            ghost: mode.ghost,
             title: name,
           });
-          yy += rowCells * cell + MAT_FIXED_H + ROW_GAP;
+          yy += rowCells * ch + MAT_FIXED_H + ROW_GAP;
         }
       },
     };
 
-    // 5. Attention: scaled scores + row softmax. Both dims scale with the
-    // sequence, so in constant-size mode the n×n matrices stretch to fill the
-    // N×N footprint (cells stay square, just larger).
+    // 5. Attention: scaled scores + row softmax (n×n, stretching to the NW
+    // footprint when constant-size is on).
     const attnScores: ColumnSpec = {
-      wCells: N,
+      wCells: NW,
       fixedW: 0,
-      hCells: 2 * N,
+      hCells: 2 * NH,
       fixedH: 2 * MAT_FIXED_H + ROW_GAP,
-      draw(gc, x, y, cell, grad) {
-        const sc = rowH(cell);
-        const a = drawMatrix(gc, x, y, sc, sc, trace.attention.scores, {
-          cmap: aCmap,
-          kind: "acts",
-          grad,
+      draw(gc, x, y, cw, ch, mode) {
+        const sw = colW(cw);
+        const sh = rowH(ch);
+        const opts = { cmap: aCmap, kind: "acts" as const, grad: mode.grad, ghost: mode.ghost };
+        const a = drawMatrix(gc, x, y, sw, sh, trace.attention.scores, {
+          ...opts,
           title: "QKᵀ/√d",
         });
-        drawMatrix(gc, x, y + a.h + ROW_GAP, sc, sc, trace.attention.attnW, {
-          cmap: aCmap,
-          kind: "acts",
-          grad,
+        drawMatrix(gc, x, y + a.h + ROW_GAP, sw, sh, trace.attention.attnW, {
+          ...opts,
           title: "softmax rows",
         });
       },
@@ -259,13 +346,14 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
     const weighted: ColumnSpec = {
       wCells: d,
       fixedW: 0,
-      hCells: N,
+      hCells: NH,
       fixedH: MAT_FIXED_H,
-      draw(gc, x, y, cell, grad) {
-        drawMatrix(gc, x, y, cell, rowH(cell), trace.attention.out, {
+      draw(gc, x, y, cw, ch, mode) {
+        drawMatrix(gc, x, y, cw, rowH(ch), trace.attention.out, {
           cmap: aCmap,
           kind: "acts",
-          grad,
+          grad: mode.grad,
+          ghost: mode.ghost,
           title: "A·V",
         });
       },
@@ -281,26 +369,56 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
       "y = x + attn",
     );
 
-    // 8. Output: W_out weights + output-unit activations.
-    const outActRows = classification ? 1 : N;
+    // 8. Output: (optional FF hidden layer) + W_out + output activations.
+    const outActRows = classification ? 1 : NH;
     const outActCols = classification ? 1 : V;
+    const hiddenRows = classification ? 1 : NH;
     const output: ColumnSpec = {
       wCells: Math.max(d, outActCols),
       fixedW: 0,
-      hCells: outUnits + outActRows,
-      fixedH: 2 * MAT_FIXED_H + ROW_GAP,
-      draw(gc, x, y, cell, grad) {
-        const outCellH = classification ? cell : rowH(cell);
-        const a = drawMatrix(gc, x, y, cell, cell, model.wOut, {
+      hCells: (twoLayer ? d + hiddenRows : 0) + outUnits + outActRows,
+      fixedH: (twoLayer ? 4 : 2) * MAT_FIXED_H + (twoLayer ? 3 : 1) * ROW_GAP,
+      draw(gc, x, y, cw, ch, mode) {
+        const outCellH = classification ? ch : rowH(ch);
+        let yy = y;
+
+        if (twoLayer) {
+          const f = drawMatrix(gc, x, yy, cw, ch, model.wFF!, {
+            cmap: wCmap,
+            kind: "weights",
+            grad: mode.grad,
+            title: `W_ff (${d}×${d})`,
+          });
+          yy += f.h + ROW_GAP;
+          const hh = drawMatrix(
+            gc,
+            x,
+            yy,
+            cw,
+            classification ? ch : rowH(ch),
+            st.trace.hidden!,
+            {
+              cmap: aCmap,
+              kind: "acts",
+              grad: mode.grad,
+              ghost: mode.ghost,
+              title: "h = relu(W_ff·y)",
+            },
+          );
+          yy += hh.h + ROW_GAP;
+        }
+
+        const a = drawMatrix(gc, x, yy, cw, ch, model.wOut, {
           cmap: wCmap,
           kind: "weights",
-          grad,
+          grad: mode.grad,
           title: `W_out (${outUnits}×${d})`,
         });
-        const yy = y + a.h + ROW_GAP;
-        if (grad) {
+        yy += a.h + ROW_GAP;
+
+        if (mode.grad) {
           // Gradient of the raw logits — the signal backprop actually uses.
-          drawMatrix(gc, x, yy, cell, outCellH, trace.logits, {
+          drawMatrix(gc, x, yy, cw, outCellH, trace.logits, {
             cmap: aCmap,
             kind: "acts",
             grad: true,
@@ -308,16 +426,18 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
           });
         } else if (classification) {
           const p = 1 / (1 + Math.exp(-trace.logits[0][0].data));
-          drawMatrix(gc, x, yy, cell, outCellH, [[p]], {
+          drawMatrix(gc, x, yy, cw, outCellH, [[p]], {
             cmap: aCmap,
             kind: "acts",
+            ghost: mode.ghost,
             title: `σ(logit) = ${p.toFixed(2)}`,
           });
         } else {
           const probs = trace.logits.map((row) => softmaxNums(row.map((v) => v.data)));
-          drawMatrix(gc, x, yy, cell, outCellH, probs, {
+          drawMatrix(gc, x, yy, cw, outCellH, probs, {
             cmap: aCmap,
             kind: "acts",
+            ghost: mode.ghost,
             title: "softmax(logits)",
           });
         }
@@ -370,13 +490,15 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
         h / 2,
       );
       g.textAlign = "left";
+      lastLayout = [];
       return;
     }
 
     const cols = buildColumns(st);
 
     // Global cell size: fit total width and every column's height.
-    const availW = w - 2 * MARGIN - (cols.length - 1) * COL_GAP - cols.reduce((a, c) => a + c.fixedW, 0);
+    const availW =
+      w - 2 * MARGIN - (cols.length - 1) * COL_GAP - cols.reduce((a, c) => a + c.fixedW, 0);
     const totalWCells = cols.reduce((a, c) => a + c.wCells, 0);
     const contentTop = HEADER_H + TITLE_ROW_H;
     const contentH = h - contentTop - INDICATOR_H - 2 * MARGIN;
@@ -387,37 +509,59 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
     cell = Math.max(2, Math.min(14, Math.floor(cell)));
 
     const phase = st.phase;
-    // "complete" shows the whole pipeline with no active stage.
     const active = phase === "complete" ? -1 : st.stage;
+    indicatorTop = h - MARGIN - INDICATOR_H;
 
+    // Column widths: base + user resize deltas.
+    const widths = cols.map((c, i) =>
+      Math.max(MIN_COL_W, c.wCells * cell + c.fixedW + colDelta[i]),
+    );
+
+    const layout: { x: number; w: number }[] = [];
     let x = MARGIN;
     for (let i = 0; i < cols.length; i++) {
       const c = cols[i];
-      const colW = c.wCells * cell + c.fixedW;
+      const colWpx = widths[i];
+      const cellW = Math.max(1, (colWpx - c.fixedW) / Math.max(1, c.wCells));
       const isActive = i === active;
+      layout.push({ x, w: colWpx });
 
       // Stage title.
       g.fillStyle = isActive ? ACTIVE_GREEN : "#5a6675";
       g.font = `${isActive ? "bold " : ""}11px system-ui, sans-serif`;
       g.textAlign = "center";
-      g.fillText(PIPELINE_STAGES[i].title, x + colW / 2, HEADER_H + 12, colW + COL_GAP - 4);
+      g.fillText(PIPELINE_STAGES[i].title, x + colWpx / 2, HEADER_H + 12, colWpx + COL_GAP - 4);
       g.textAlign = "left";
 
-      // Column content. Forward: reveal columns up to the active one.
-      // Backward: all visible; columns the sweep has reached (>= active) show
-      // gradients. Complete: everything visible as values.
-      const visible = phase !== "forward" || i <= active;
-      if (visible) {
-        const grad = phase === "backward" && i >= active;
-        c.draw(g, x, contentTop + 4, cell, grad);
-      }
+      // Column content — always drawn. Forward: unreached activations ghost.
+      // Backward: columns the sweep covers (>= active) show gradients.
+      const mode: DrawMode =
+        phase === "forward"
+          ? { grad: false, ghost: i > active }
+          : phase === "backward"
+            ? { grad: i >= active, ghost: false }
+            : { grad: false, ghost: false };
+      cols[i].draw(g, x, contentTop + 4, cellW, cell, mode);
 
       // Active-stage indicator rect (exactly as wide as the column above it).
       g.fillStyle = isActive ? ACTIVE_GREEN : IDLE_GRAY;
-      g.fillRect(x, h - MARGIN - INDICATOR_H, colW, INDICATOR_H);
+      g.fillRect(x, indicatorTop, colWpx, INDICATOR_H);
 
-      x += colW + COL_GAP;
+      x += colWpx + COL_GAP;
     }
+    lastLayout = layout;
+
+    // "<>" resize handles between the indicator bars.
+    g.fillStyle = "#8a98a8";
+    g.font = "bold 9px system-ui, sans-serif";
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    for (let i = 0; i < layout.length - 1; i++) {
+      const bx = layout[i].x + layout[i].w + COL_GAP / 2;
+      g.fillText("<>", bx, indicatorTop + INDICATOR_H / 2);
+    }
+    g.textAlign = "left";
+    g.textBaseline = "alphabetic";
   }
 
   function update(): void {

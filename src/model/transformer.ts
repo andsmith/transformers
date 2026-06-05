@@ -20,8 +20,7 @@ export interface ModelConfig {
   vocabSize: number;
   embedDim: number;
   peScheme: PEScheme;
-  /** 1 = single output projection, 2 = one hidden layer + projection.
-   *  TODO(later): the 2-layer option is accepted but not yet implemented. */
+  /** 1 = single output projection; 2 = hidden layer relu(W_ff·y) first. */
   numOutputLayers: 1 | 2;
   maxLen: number;
 }
@@ -41,6 +40,9 @@ export interface ForwardTrace {
   y: Value[][];
   /** Mean-pooled y (classification only, else null). */
   pooled: Value[] | null;
+  /** Hidden FF activations relu(W_ff·y) when numOutputLayers === 2, else
+   *  null. (Classification: a single pooled row.) */
+  hidden: Value[][] | null;
   /** Output logits (transduction: seqLen x |V|; classification: 1 x 1). */
   logits: Value[][];
 }
@@ -55,6 +57,8 @@ export class TransformerModel {
   readonly store: ParamStore;
   readonly embeddings: Embeddings;
   readonly attention: AttentionHead;
+  /** Hidden FF layer (d x d), only when numOutputLayers === 2. */
+  readonly wFF: Value[][] | null;
   /** Output projection: outputUnits x embedDim. */
   readonly wOut: Value[][];
   readonly outputUnits: number;
@@ -80,6 +84,16 @@ export class TransformerModel {
       { embedDim: cfg.embedDim, headDim: cfg.embedDim },
       rng,
     );
+
+    this.wFF =
+      cfg.numOutputLayers === 2
+        ? this.store.matrix(
+            "ff_W1",
+            cfg.embedDim,
+            cfg.embedDim,
+            heUniform(rng, cfg.embedDim),
+          )
+        : null;
 
     this.wOut = this.store.matrix(
       "out_proj",
@@ -118,22 +132,37 @@ export class TransformerModel {
     // Residual connection.
     const y = x.map((xi, i) => addVec(xi, attention.out[i]));
 
+    // Optional hidden FF layer: h = relu(W_ff · v).
+    const ff = (vec: Value[]): Value[] =>
+      matVec(this.wFF!, vec).map((v) => v.relu());
+
     let pooled: Value[] | null = null;
+    let hidden: Value[][] | null = null;
     let logits: Value[][];
     if (isClassification(this.cfg.task)) {
-      // Mean-pool positions, then the single-unit projection.
+      // Mean-pool positions, then (optionally) the FF layer, then project.
       const inv = 1 / n;
       let acc = scaleVec(y[0], inv);
       for (let i = 1; i < n; i++) acc = addVec(acc, scaleVec(y[i], inv));
       pooled = acc;
-      logits = [matVec(this.wOut, pooled)];
+      let pre = pooled;
+      if (this.wFF) {
+        pre = ff(pooled);
+        hidden = [pre];
+      }
+      logits = [matVec(this.wOut, pre)];
     } else {
-      logits = y.map((yi) => matVec(this.wOut, yi));
+      let pre = y;
+      if (this.wFF) {
+        hidden = y.map(ff);
+        pre = hidden;
+      }
+      logits = pre.map((h) => matVec(this.wOut, h));
     }
 
     return {
       logits,
-      trace: { oneHot, tok, pos, x, attention, y, pooled, logits },
+      trace: { oneHot, tok, pos, x, attention, y, pooled, hidden, logits },
     };
   }
 }

@@ -13,7 +13,7 @@ import { TransformerModel } from "../src/model/transformer";
 import { SGD } from "../src/training/optimizer";
 import { TrainingLoop, PIPELINE_STAGES } from "../src/training/loop";
 
-function build(task: "copy" | "parens") {
+function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
   const dataset = generateDataset({
     task,
     vocabSize: 4,
@@ -29,7 +29,7 @@ function build(task: "copy" | "parens") {
       vocabSize: 4,
       embedDim: 8,
       peScheme: "sinusoidal",
-      numOutputLayers: 1,
+      numOutputLayers: layers,
       maxLen: 6,
     },
     // simple deterministic rng
@@ -66,6 +66,18 @@ function build(task: "copy" | "parens") {
   const first = loop.iterHistory.slice(0, 20).reduce((a, p) => a + p.trainLoss, 0) / 20;
   const last = loop.iterHistory.slice(-20).reduce((a, p) => a + p.trainLoss, 0) / 20;
   console.log(`parens: first20 avg loss=${first.toFixed(3)}  last20 avg loss=${last.toFixed(3)}`);
+}
+
+// --- 1b2. two-layer FF path learns and traces hidden activations ---
+{
+  const { loop, model } = build("copy", 2);
+  for (let i = 0; i < 300; i++) loop.stepIteration();
+  const first = loop.iterHistory.slice(0, 20).reduce((a, p) => a + p.trainLoss, 0) / 20;
+  const last = loop.iterHistory.slice(-20).reduce((a, p) => a + p.trainLoss, 0) / 20;
+  console.log(`copy-2layer: first20 avg loss=${first.toFixed(3)}  last20 avg loss=${last.toFixed(3)}`);
+  if (!(last < first * 0.8)) throw new Error("2-layer copy did not learn");
+  if (!model.wFF) throw new Error("wFF should be registered for 2 layers");
+  if (!loop.staged?.trace.hidden) throw new Error("trace.hidden missing for 2 layers");
 }
 
 // --- 1c. multi-step modes: snapshots, epoch rollover points, stepEpoch ---
