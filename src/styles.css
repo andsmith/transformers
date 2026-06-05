@@ -436,6 +436,12 @@ body.resizing {
   color: var(--muted);
 }
 
+/* Inline informational line styled like the control labels (full size, ink). */
+.control-note {
+  font-size: var(--ui-font-px);
+  color: var(--ink);
+}
+
 /* ---- radios ---- */
 .radio-group {
   display: inline-flex;

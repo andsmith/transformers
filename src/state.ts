@@ -236,7 +236,7 @@ export function createInitialState(): AppState {
     topCollapsed: false,
     lossCollapsed: false,
     uiFontPx: 12,
-    vizFontPx: 9,
+    vizFontPx: 16,
     ...built,
   };
 }

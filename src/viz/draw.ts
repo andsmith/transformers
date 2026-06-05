@@ -53,16 +53,25 @@ export interface DrawnSize {
   h: number;
 }
 
-export const DEFAULT_VIZ_FONT = 9;
+export const DEFAULT_VIZ_FONT = 16;
+
+/**
+ * Type hierarchy relative to the viz font setting (the math-label size):
+ * captions (upper kind/size + lower description) render at ~50%; the network
+ * view draws its column titles at ~80%.
+ */
+export function capFont(font: number): number {
+  return Math.max(7, Math.round(font * 0.5));
+}
 
 /** Height of the caption strip above the cells. */
 export function capH(font: number): number {
-  return font + 4;
+  return capFont(font) + 4;
 }
 
 /** Height of the description strip below the cells. */
 export function titleH(font: number): number {
-  return font + 4;
+  return capFont(font) + 4;
 }
 
 /** Fixed vertical overhead of one matrix (caption + description strips). */
@@ -72,7 +81,7 @@ export function matFixedH(font: number): number {
 
 /** Horizontal gutter reserved for a math label. */
 export function mathLabelW(font: number): number {
-  return Math.round(font * 2.4) + 6;
+  return Math.round(font * 2.2) + 4;
 }
 
 /** Extract plain numbers from a Value or number matrix. */
@@ -110,12 +119,14 @@ export function drawMatrix(
 
   // Formal name in the left gutter, vertically centered on the cells and
   // right-aligned against the matrix edge (constant gap to the heatmap).
+  // This is the 100% size of the viz type hierarchy.
   if (opts.mathLabel) {
     g.fillStyle = INK;
     g.textBaseline = "middle";
     g.textAlign = "left";
-    const mainFont = font + 5;
-    const subFont = `italic ${font}px Georgia, "Times New Roman", serif`;
+    const mainFont = font;
+    const subPx = Math.max(7, Math.round(font * 0.7));
+    const subFont = `italic ${subPx}px Georgia, "Times New Roman", serif`;
     const mainFontStr = `italic bold ${mainFont}px Georgia, "Times New Roman", serif`;
     g.font = subFont;
     const subW = opts.mathLabel.sub ? g.measureText(opts.mathLabel.sub).width : 0;
@@ -162,14 +173,15 @@ export function drawMatrix(
   g.lineWidth = 1.5;
   g.strokeRect(gx - 0.75, gy - 0.75, w + 1.5, h + 1.5);
 
-  // Top-left: kind label. Top-right: size.
+  // Top-left: kind label. Top-right: size. (~50% of the viz font.)
+  const cf = capFont(font);
   const kindText = `${opts.grad ? "∇ " : ""}${opts.kind === "weights" ? "Wts." : "Act."}`;
   g.fillStyle = frame;
-  g.font = `bold ${font}px system-ui, sans-serif`;
+  g.font = `bold ${cf}px system-ui, sans-serif`;
   g.textAlign = "left";
   g.fillText(kindText, gx, y + capH(font) - 3);
   g.fillStyle = MUTED;
-  g.font = `${Math.max(7, font - 1)}px system-ui, sans-serif`;
+  g.font = `${Math.max(6, cf - 1)}px system-ui, sans-serif`;
   g.textAlign = "right";
   g.fillText(`${rows}×${cols}`, gx + w, y + capH(font) - 3);
   g.textAlign = "left";
@@ -188,7 +200,7 @@ export function drawMatrix(
   let totalH = capH(font) + h;
   if (opts.title) {
     g.fillStyle = opts.ghost ? GHOST_FRAME : MUTED;
-    g.font = `${font}px system-ui, sans-serif`;
+    g.font = `${capFont(font)}px system-ui, sans-serif`;
     g.textAlign = "center";
     g.fillText(opts.title, gx + w / 2, gy + h + titleH(font) - 3, Math.max(w, 70));
     g.textAlign = "left";
@@ -204,9 +216,10 @@ export function drawGlyph(
   cx: number,
   cy: number,
   ch: string,
+  size = 12,
 ): void {
   g.fillStyle = MUTED;
-  g.font = "bold 12px system-ui, sans-serif";
+  g.font = `bold ${size}px system-ui, sans-serif`;
   g.textAlign = "center";
   g.textBaseline = "middle";
   g.fillText(ch, cx, cy);

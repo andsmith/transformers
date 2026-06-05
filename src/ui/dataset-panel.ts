@@ -111,7 +111,7 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
     onInput: (v) => ctx.apply({ testSetSize: v }),
   });
   const spaceHint = document.createElement("div");
-  spaceHint.className = "hint";
+  spaceHint.className = "control-note";
   // Regenerate (compact) + seed entry + random-seed checkbox, one row.
   const regenBtn = makeButton("Regenerate", () => ctx.regenerate());
   regenBtn.classList.add("btn-compact");

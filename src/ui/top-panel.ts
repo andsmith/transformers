@@ -159,8 +159,8 @@ export function mountTopPanel(host: HTMLElement, ctx: AppContext): PanelHandle {
   });
   const vizFontSlider: Slider = makeSlider({
     label: "Viz captions",
-    min: 7,
-    max: 14,
+    min: 8,
+    max: 22,
     step: 1,
     value: ctx.state.vizFontPx,
     onInput: (v) => ctx.apply({ vizFontPx: v }),

@@ -20,11 +20,12 @@ import {
   DEFAULT_WEIGHT_CMAP,
   type Stops,
 } from "../viz/colormaps";
-import { drawGlyph, drawMatrix, matFixedH, mathLabelW } from "../viz/draw";
+import { capH, drawGlyph, drawMatrix, matFixedH, mathLabelW } from "../viz/draw";
 import { tokenChar, tokenColor } from "../tasks/grammar";
 import { isClassification } from "../tasks/types";
 
-const TITLE_ROW_H = 24;
+/** Column-title size: ~80% of the viz font setting. */
+const titleFontOf = (font: number) => Math.max(9, Math.round(font * 0.8));
 const INDICATOR_H = 13; // ~one text line
 const MARGIN = 10;
 const COL_GAP = 16;
@@ -147,7 +148,7 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
 
     const font = s.vizFontPx;
     const matFH = matFixedH(font);
-    const glyphH = font + 5;
+    const glyphH = Math.max(10, Math.round(font * 0.7)) + 3;
     const mathW = mathLabelW(font);
 
     const n = st.sample.input.length;
@@ -202,7 +203,7 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
       fixedH: matFH,
       draw(gc, x, y, cw, ch, mode) {
         const rh = rowH(ch);
-        const top = y + font + 4; // align with the one-hot's cell rows
+        const top = y + capH(font); // align with the one-hot's cell rows
         for (let i = 0; i < n; i++) {
           drawTokenGlyph(gc, st.sample.input[i], x, top + i * rh, cw, rh);
         }
@@ -227,7 +228,7 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
       draw(gc, x, y, cw, ch, mode) {
         const tx = x + EMB_GUTTER;
         // Vocabulary symbols beside the token-table rows.
-        const tokTop = y + font + 4;
+        const tokTop = y + capH(font);
         const symW = Math.min(EMB_GUTTER - 6, ch);
         for (let id = 0; id < V; id++) {
           drawTokenGlyph(gc, id, x + (EMB_GUTTER - 6 - symW), tokTop + id * ch, symW, ch);
@@ -242,7 +243,7 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
         });
         // Position integers beside the position-table rows.
         const py = y + a.h + ROW_GAP;
-        const posTop = py + font + 4;
+        const posTop = py + capH(font);
         gc.fillStyle = INK;
         gc.font = `${Math.max(7, Math.min(ch - 1, font))}px ui-monospace, monospace`;
         gc.textAlign = "right";
@@ -285,7 +286,13 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
           });
           yy += sz.h;
           if (k < items.length - 1) {
-            drawGlyph(gc, x + mathW + (d * cw) / 2, yy + glyphH / 2, k === 0 ? "+" : "=");
+            drawGlyph(
+              gc,
+              x + mathW + (d * cw) / 2,
+              yy + glyphH / 2,
+              k === 0 ? "+" : "=",
+              Math.max(10, Math.round(font * 0.7)),
+            );
             yy += glyphH;
           }
         }
@@ -500,7 +507,8 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
     const fixedSum = cols.reduce((a, c) => a + c.fixedW, 0);
     const availContentW = Math.max(50, w - 2 * MARGIN - gaps - fixedSum);
     const totalWCells = cols.reduce((a, c) => a + c.wCells, 0);
-    const contentTop = MARGIN + TITLE_ROW_H;
+    const titleFont = titleFontOf(ctx.state.vizFontPx);
+    const contentTop = MARGIN + titleFont + 10;
     const contentH = h - contentTop - INDICATOR_H - 2 * MARGIN;
 
     // Columns spread across ALL the horizontal space (proportional to their
@@ -532,11 +540,11 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
       const drawnW = c.wCells * cell + c.fixedW;
       const dx = Math.max(0, (colWpx - drawnW) / 2);
 
-      // Stage title — larger, dark; active stage in green.
+      // Stage title — ~80% of the viz font, dark; active stage in green.
       g.fillStyle = isActive ? ACTIVE_GREEN : INK;
-      g.font = "bold 14px system-ui, sans-serif";
+      g.font = `bold ${titleFont}px system-ui, sans-serif`;
       g.textAlign = "center";
-      g.fillText(PIPELINE_STAGES[i].title, x + colWpx / 2, MARGIN + 14, colWpx + COL_GAP - 4);
+      g.fillText(PIPELINE_STAGES[i].title, x + colWpx / 2, MARGIN + titleFont, colWpx + COL_GAP - 4);
       g.textAlign = "left";
 
       const mode: DrawMode =
