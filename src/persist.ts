@@ -128,7 +128,9 @@ export function applySave(
   state.fixedLength = e.fixedLength;
   state.uniformLen = e.uniformLen ?? true;
   state.seed = e.seed;
-  state.randomSeed = e.randomSeed;
+  // Force deterministic mode so the loaded seed is actually used (and the
+  // "random" box reflects it) — otherwise the next Regenerate would discard it.
+  state.randomSeed = false;
   state.running = false;
 
   doRebuild(); // same seed -> identical dataset + freshly initialized model
