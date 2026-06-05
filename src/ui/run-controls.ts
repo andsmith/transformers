@@ -29,12 +29,15 @@ export function mountRunControls(host: HTMLElement, ctx: AppContext): PanelHandl
   // Title row: big dark "Run" with the Step/Go button beside it (above the
   // dropdown, saving horizontal space).
   const stepBtn = makeButton("Step", () => ctx.step());
+  const resetBtn = makeButton("Reset", () => ctx.reset());
+  resetBtn.classList.add("btn-secondary", "btn-compact");
+  resetBtn.title = "Re-initialize model weights and clear training history";
   const title = document.createElement("div");
   title.className = "run-title";
   title.textContent = "Run";
   const titleRow = document.createElement("div");
   titleRow.className = "run-title-row";
-  titleRow.append(title, stepBtn);
+  titleRow.append(title, stepBtn, resetBtn);
 
   const granDropdown: Dropdown<StepGranularity> = makeDropdown(
     [

@@ -193,6 +193,13 @@ window.addEventListener("DOMContentLoaded", () => {
       else if (state.stepGranularity === "epoch") state.loop.stepEpoch();
       refreshAll();
     },
+    reset() {
+      // Fresh model weights + empty training history; the dataset is
+      // regenerated from the unchanged seed, so the data stays the same.
+      state.running = false;
+      doRebuild();
+      refreshAll();
+    },
     loadSave(json) {
       let parsed: SaveFile;
       try {

@@ -83,6 +83,8 @@ export interface AppContext {
   regenerate(): void;
   /** Advance the computation, or toggle continuous running (granularity-dependent). */
   step(): void;
+  /** Re-initialize model weights and clear training history (same dataset/seed). */
+  reset(): void;
   /** Apply a parsed save file (JSON text). Returns an error message or null. */
   loadSave(json: string): string | null;
 }
