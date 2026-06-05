@@ -4,8 +4,8 @@
  * titles (and underline) span the full panel width:
  *   loss   — single column: last sample / last epoch train / last epoch test /
  *            best epoch test
- *   timing — two columns: samples/s (≤1 Hz averaging), s/epoch, test-set
- *            hits per epoch (rejected training draws)
+ *   timing — two lines: "Samples/s: x · s/epoch: y" and
+ *            "Test-set hits/epoch: n" (rejected training draws)
  */
 
 import type { AppContext } from "../state";
@@ -33,7 +33,7 @@ export function mountStatusPanel(host: HTMLElement, ctx: AppContext): PanelHandl
   };
 
   const lossBody = section("loss", false);
-  const timingBody = section("timing", true);
+  const timingBody = section("timing", false);
 
   // --- timing accumulators (sampled at most once per second) ---
   let lastT = performance.now();
@@ -88,19 +88,19 @@ export function mountStatusPanel(host: HTMLElement, ctx: AppContext): PanelHandl
     const spsText = sps > 0 ? sps.toFixed(sps >= 100 ? 0 : 1) : "—";
     const epochText =
       secPerEpoch > 0
-        ? `${secPerEpoch.toFixed(secPerEpoch >= 100 ? 0 : 1)} s`
+        ? secPerEpoch.toFixed(secPerEpoch >= 100 ? 0 : 1)
         : sps > 0
-          ? `~${(loop.trainSize / sps).toFixed(1)} s`
+          ? `~${(loop.trainSize / sps).toFixed(1)}`
           : "—";
     const hits =
       loop.lastEpochRejections >= 0
         ? String(loop.lastEpochRejections)
         : `${loop.rejectionsThisEpoch}…`;
     timingBody.innerHTML =
-      `<div>${spsText} samples/s</div>` +
-      `<div>${epochText} / epoch</div>` +
+      `<div>Samples/s: <span class="status-big">${spsText}</span>` +
+      `<span class="status-dim"> · </span>s/epoch: <span class="status-big">${epochText}</span></div>` +
       `<div title="Training draws rejected for colliding with the test set">` +
-      `test-set hits: ${hits}/epoch</div>`;
+      `Test-set hits/epoch: <span class="status-big">${hits}</span></div>`;
   }
 
   update();
