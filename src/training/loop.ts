@@ -68,6 +68,16 @@ export interface TimingPoint {
   sps: number;
 }
 
+/** Per-epoch statistics recorded at each rollover. */
+export interface EpochStat {
+  /** Epoch number (matches epochHistory.x). */
+  x: number;
+  /** Wall-clock duration of the epoch in seconds (includes any pauses). */
+  seconds: number;
+  /** Training draws rejected for colliding with the test set. */
+  hits: number;
+}
+
 /** Everything needed to continue a run exactly where it left off
  *  (sample-boundary granularity; weights are saved separately). */
 export interface LoopSnapshotData {
@@ -82,6 +92,8 @@ export interface LoopSnapshotData {
   rngState: number;
   /** Optional (added in 0.0.22); older saves simply lack it. */
   timingHistory?: TimingPoint[];
+  /** Optional (added in 0.0.29). */
+  epochStats?: EpochStat[];
 }
 
 export class TrainingLoop {
@@ -94,6 +106,10 @@ export class TrainingLoop {
   readonly epochHistory: LossPoint[] = [];
   /** Throughput history (samples/sec), pushed by the app's tick sampler. */
   readonly timingHistory: TimingPoint[] = [];
+  /** Per-epoch stats (duration, test-set hits), recorded at each rollover. */
+  readonly epochStats: EpochStat[] = [];
+  /** Wall-clock start of the current epoch. */
+  private epochStartT = performance.now();
   /** Index into iterHistory where the current epoch began (for epoch means). */
   private epochIterStart = 0;
   /** Test-set hits (rejected draws) while sampling the current epoch. */
@@ -141,6 +157,7 @@ export class TrainingLoop {
       iterHistory: this.iterHistory.map((p) => ({ ...p })),
       epochHistory: this.epochHistory.map((p) => ({ ...p })),
       timingHistory: this.timingHistory.map((p) => ({ ...p })),
+      epochStats: this.epochStats.map((p) => ({ ...p })),
       iteration: this.iteration,
       epoch: this.epoch,
       cursor: this.cursor,
@@ -162,6 +179,8 @@ export class TrainingLoop {
     for (const p of prev.epochHistory) this.epochHistory.push(p);
     this.timingHistory.length = 0;
     for (const p of prev.timingHistory) this.timingHistory.push(p);
+    this.epochStats.length = 0;
+    for (const p of prev.epochStats) this.epochStats.push(p);
     this.iteration = prev.iteration;
     this.epoch = prev.epoch;
     this.epochIterStart = prev.epochIterStart;
@@ -178,6 +197,8 @@ export class TrainingLoop {
     for (const p of h.epochHistory) this.epochHistory.push({ ...p });
     this.timingHistory.length = 0;
     for (const p of h.timingHistory ?? []) this.timingHistory.push({ ...p });
+    this.epochStats.length = 0;
+    for (const p of h.epochStats ?? []) this.epochStats.push({ ...p });
     this.iteration = h.iteration;
     this.epoch = h.epoch;
     this.cursor = h.cursor;
@@ -236,6 +257,13 @@ export class TrainingLoop {
       this.cursor = 0;
       this.epoch++;
       this.lastEpochRejections = this.rejCounter.rejections;
+      const now = performance.now();
+      this.epochStats.push({
+        x: this.epoch,
+        seconds: (now - this.epochStartT) / 1000,
+        hits: this.rejCounter.rejections,
+      });
+      this.epochStartT = now;
       this.rejCounter.rejections = 0;
       const pts = this.iterHistory.slice(this.epochIterStart);
       const mean =
