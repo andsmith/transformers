@@ -100,6 +100,8 @@ export interface SliderOpts {
   value: number;
   /** Format the live value readout (default: String). */
   format?: (v: number) => string;
+  /** Single-row layout: label, slider, value side by side. */
+  inline?: boolean;
   onInput: (value: number) => void;
 }
 
@@ -112,16 +114,13 @@ export interface Slider {
 export function makeSlider(opts: SliderOpts): Slider {
   const fmt = opts.format ?? ((v: number) => String(v));
   const el = document.createElement("label");
-  el.className = "slider";
+  el.className = opts.inline ? "slider inline" : "slider";
 
-  const head = document.createElement("div");
-  head.className = "slider-head";
   const name = document.createElement("span");
   name.textContent = opts.label;
   const readout = document.createElement("span");
   readout.className = "slider-value";
   readout.textContent = fmt(opts.value);
-  head.append(name, readout);
 
   const input = document.createElement("input");
   input.type = "range";
@@ -135,7 +134,15 @@ export function makeSlider(opts: SliderOpts): Slider {
     opts.onInput(v);
   });
 
-  el.append(head, input);
+  if (opts.inline) {
+    // Title and value on either end, slider between.
+    el.append(name, input, readout);
+  } else {
+    const head = document.createElement("div");
+    head.className = "slider-head";
+    head.append(name, readout);
+    el.append(head, input);
+  }
   return {
     el,
     set(value: number) {

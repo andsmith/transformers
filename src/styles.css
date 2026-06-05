@@ -174,7 +174,7 @@ body.resizing {
 
 .control-row {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap; /* all control fieldsets on one row */
   gap: 12px;
   align-items: flex-start;
 }
@@ -334,6 +334,29 @@ body.resizing {
   width: 100%;
 }
 
+/* Inline slider: label, slider, value on one row (label/value at the ends). */
+.slider.inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.slider.inline > span:first-child {
+  white-space: nowrap;
+}
+
+.slider.inline input[type="range"] {
+  flex: 1;
+  width: auto;
+  min-width: 50px;
+}
+
+.slider.inline .slider-value {
+  min-width: 52px;
+  text-align: right;
+  white-space: nowrap;
+}
+
 /* ---- buttons / dropdown ---- */
 .btn {
   border: 1px solid var(--accent);
@@ -387,12 +410,29 @@ body.resizing {
   border-bottom: 1px solid var(--line);
 }
 
-/* A row split into two equal halves (slider | companion control). */
+/* A row split 40/60 (slider | companion control). */
 .control-pair {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 2fr 3fr;
   gap: 10px;
   align-items: start;
+}
+
+.control-pair > .checkbox {
+  align-self: center;
+}
+
+/* "Viewing" label styled like the slider labels, dropdown inline. */
+.view-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.view-row .dropdown {
+  flex: 1;
 }
 
 .vocab-tokens {

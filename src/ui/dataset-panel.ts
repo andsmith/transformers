@@ -92,6 +92,7 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
     min: 10,
     max: 5000,
     step: 10,
+    inline: true,
     value: ctx.state.numExamples,
     onInput: (v) => ctx.apply({ numExamples: v }),
   });
@@ -100,6 +101,7 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
     min: 0,
     max: 50,
     step: 1,
+    inline: true,
     value: Math.round(ctx.state.trainTestSplit * 100),
     format: (v) => `${v}% test`,
     onInput: (v) => ctx.apply({ trainTestSplit: v / 100 }),
@@ -114,10 +116,10 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
     ctx.state.datasetView,
     (v) => ctx.apply({ datasetView: v }),
   );
+  // "Viewing" label inline with the dropdown, styled like the slider labels.
   const viewRow = document.createElement("div");
-  viewRow.className = "labeled";
-  const viewCap = document.createElement("div");
-  viewCap.className = "caption";
+  viewRow.className = "view-row";
+  const viewCap = document.createElement("span");
   viewCap.textContent = "Viewing";
   viewRow.append(viewCap, viewDropdown.el);
 
@@ -178,6 +180,14 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
     const classification = isClassification(ctx.state.task);
     const frag = document.createDocumentFragment();
 
+    const sorted = [...list].sort((a, b) => a.index - b.index);
+
+    // Fixed input-column width (max sequence in the list) so every arrow
+    // lines up vertically, in both chars and squares modes.
+    const maxInLen = sorted.reduce((m, e) => Math.max(m, e.input.length), 1);
+    const perTok = ctx.state.display === "squares" ? 16 : 14; // token + gap px
+    const inColW = `${maxInLen * perTok}px`;
+
     // Column header: "Input → Output".
     const head = document.createElement("div");
     head.className = "examples-header";
@@ -185,6 +195,7 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
     headIdx.className = "ex-index";
     const headIn = document.createElement("span");
     headIn.textContent = "Input";
+    headIn.style.minWidth = inColW;
     head.append(headIdx, headIn);
     const headOut = document.createElement("span");
     headOut.textContent = "Output";
@@ -199,7 +210,6 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
     }
     frag.appendChild(head);
 
-    const sorted = [...list].sort((a, b) => a.index - b.index);
     for (const ex of sorted) {
       const rowEl = document.createElement("div");
       rowEl.className = "example-row";
@@ -207,7 +217,9 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
       const idx = document.createElement("span");
       idx.className = "ex-index";
       idx.textContent = `#${ex.index}`;
-      rowEl.append(idx, renderSeq(ex.input));
+      const inSeq = renderSeq(ex.input);
+      inSeq.style.minWidth = inColW;
+      rowEl.append(idx, inSeq);
 
       if (classification) {
         const balanced = ex.output[0] === 1;

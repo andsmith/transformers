@@ -13,7 +13,6 @@ import { ACT_CMAPS, WEIGHT_CMAPS } from "../viz/colormaps";
 import {
   makeDropdown,
   makeFieldset,
-  makeRadioCards,
   makeRadioGroup,
   makeSlider,
   type Dropdown,
@@ -48,12 +47,14 @@ export function mountTopPanel(host: HTMLElement, ctx: AppContext): PanelHandle {
   host.appendChild(row);
 
   // --- task ---
+  // Compact text-only buttons (descriptions live in the tooltips) so all the
+  // control fieldsets fit on a single row.
   const taskBox = makeFieldset("Task");
-  const taskRadios: RadioGroup<Task> = makeRadioCards(
+  const taskRadios: RadioGroup<Task> = makeRadioGroup(
     ALL_TASKS.map((t) => ({
       value: t,
-      title: TASK_SPECS[t].label,
-      description: TASK_SPECS[t].description,
+      label: TASK_SPECS[t].label,
+      title: TASK_SPECS[t].description,
     })),
     ctx.state.task,
     (t) => ctx.apply({ task: t }),
