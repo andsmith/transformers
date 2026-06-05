@@ -496,35 +496,42 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
 
     const cols = buildColumns(st);
 
-    // Global cell size: fit total width and every column's height.
-    const availW =
-      w - 2 * MARGIN - (cols.length - 1) * COL_GAP - cols.reduce((a, c) => a + c.fixedW, 0);
+    const gaps = (cols.length - 1) * COL_GAP;
+    const fixedSum = cols.reduce((a, c) => a + c.fixedW, 0);
+    const availContentW = Math.max(50, w - 2 * MARGIN - gaps - fixedSum);
     const totalWCells = cols.reduce((a, c) => a + c.wCells, 0);
     const contentTop = HEADER_H + TITLE_ROW_H;
     const contentH = h - contentTop - INDICATOR_H - 2 * MARGIN;
-    let cell = availW / Math.max(1, totalWCells);
-    for (const c of cols) {
-      cell = Math.min(cell, (contentH - c.fixedH) / Math.max(1, c.hCells));
-    }
-    cell = Math.max(2, Math.min(14, Math.floor(cell)));
+
+    // Columns spread across ALL the horizontal space (proportional to their
+    // natural cell widths), plus the user's resize deltas.
+    const allocW = cols.map((c, i) =>
+      Math.max(
+        MIN_COL_W,
+        c.fixedW + (availContentW * c.wCells) / Math.max(1, totalWCells) + colDelta[i],
+      ),
+    );
 
     const phase = st.phase;
     const active = phase === "complete" ? -1 : st.stage;
     indicatorTop = h - MARGIN - INDICATOR_H;
 
-    // Column widths: base + user resize deltas.
-    const widths = cols.map((c, i) =>
-      Math.max(MIN_COL_W, c.wCells * cell + c.fixedW + colDelta[i]),
-    );
-
     const layout: { x: number; w: number }[] = [];
     let x = MARGIN;
     for (let i = 0; i < cols.length; i++) {
       const c = cols[i];
-      const colWpx = widths[i];
-      const cellW = Math.max(1, (colWpx - c.fixedW) / Math.max(1, c.wCells));
+      const colWpx = allocW[i];
       const isActive = i === active;
       layout.push({ x, w: colWpx });
+
+      // Square cells: grow to fill the column's width, capped by the vertical
+      // fit so badges/titles never push past the panel.
+      const wFit = (colWpx - c.fixedW) / Math.max(1, c.wCells);
+      const hFit = (contentH - c.fixedH) / Math.max(1, c.hCells);
+      const cell = Math.max(2, Math.floor(Math.min(wFit, hFit)));
+      // Center the drawn content within the allocated column width.
+      const drawnW = c.wCells * cell + c.fixedW;
+      const dx = Math.max(0, (colWpx - drawnW) / 2);
 
       // Stage title.
       g.fillStyle = isActive ? ACTIVE_GREEN : "#5a6675";
@@ -541,7 +548,7 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
           : phase === "backward"
             ? { grad: i >= active, ghost: false }
             : { grad: false, ghost: false };
-      cols[i].draw(g, x, contentTop + 4, cellW, cell, mode);
+      cols[i].draw(g, x + dx, contentTop + 4, cell, cell, mode);
 
       // Active-stage indicator rect (exactly as wide as the column above it).
       g.fillStyle = isActive ? ACTIVE_GREEN : IDLE_GRAY;
