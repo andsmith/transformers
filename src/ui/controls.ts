@@ -154,6 +154,148 @@ export function makeSlider(opts: SliderOpts): Slider {
   };
 }
 
+export interface RangeSliderOpts {
+  label: string;
+  min: number;
+  max: number;
+  step: number;
+  lo: number;
+  hi: number;
+  format?: (lo: number, hi: number) => string;
+  onInput: (lo: number, hi: number) => void;
+}
+
+export interface RangeSlider {
+  el: HTMLElement;
+  set(lo: number, hi: number): void;
+}
+
+/**
+ * A dual-thumb slider for picking a [lo, hi] range on one axis. Custom track +
+ * two pointer-dragged thumbs (no native dual-range input exists).
+ */
+export function makeRangeSlider(opts: RangeSliderOpts): RangeSlider {
+  const fmt = opts.format ?? ((lo: number, hi: number) => `${lo}–${hi}`);
+  let lo = opts.lo;
+  let hi = opts.hi;
+
+  const el = document.createElement("div");
+  el.className = "slider range-slider";
+
+  const head = document.createElement("div");
+  head.className = "slider-head";
+  const name = document.createElement("span");
+  name.textContent = opts.label;
+  const readout = document.createElement("span");
+  readout.className = "slider-value";
+  head.append(name, readout);
+
+  const track = document.createElement("div");
+  track.className = "range-track";
+  const fill = document.createElement("div");
+  fill.className = "range-fill";
+  const thumbLo = document.createElement("div");
+  thumbLo.className = "range-thumb";
+  const thumbHi = document.createElement("div");
+  thumbHi.className = "range-thumb";
+  track.append(fill, thumbLo, thumbHi);
+
+  el.append(head, track);
+
+  const frac = (v: number) => (v - opts.min) / Math.max(1e-9, opts.max - opts.min);
+
+  function render(): void {
+    readout.textContent = fmt(lo, hi);
+    fill.style.left = `${frac(lo) * 100}%`;
+    fill.style.width = `${(frac(hi) - frac(lo)) * 100}%`;
+    thumbLo.style.left = `${frac(lo) * 100}%`;
+    thumbHi.style.left = `${frac(hi) * 100}%`;
+  }
+
+  function valueAt(clientX: number): number {
+    const r = track.getBoundingClientRect();
+    const t = Math.max(0, Math.min(1, (clientX - r.left) / Math.max(1, r.width)));
+    const raw = opts.min + t * (opts.max - opts.min);
+    return Math.round(raw / opts.step) * opts.step;
+  }
+
+  let active: "lo" | "hi" | null = null;
+
+  const attach = (thumb: HTMLElement, which: "lo" | "hi") => {
+    thumb.addEventListener("pointerdown", (e) => {
+      active = which;
+      thumb.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    });
+    thumb.addEventListener("pointermove", (e) => {
+      if (active !== which) return;
+      const v = valueAt(e.clientX);
+      if (which === "lo") lo = Math.max(opts.min, Math.min(v, hi));
+      else hi = Math.min(opts.max, Math.max(v, lo));
+      render();
+      opts.onInput(lo, hi);
+    });
+    const end = () => {
+      active = null;
+    };
+    thumb.addEventListener("pointerup", end);
+    thumb.addEventListener("pointercancel", end);
+  };
+  attach(thumbLo, "lo");
+  attach(thumbHi, "hi");
+
+  // Clicking the track moves the nearest thumb.
+  track.addEventListener("pointerdown", (e) => {
+    if (e.target !== track && e.target !== fill) return;
+    const v = valueAt(e.clientX);
+    if (Math.abs(v - lo) <= Math.abs(v - hi)) lo = Math.max(opts.min, Math.min(v, hi));
+    else hi = Math.min(opts.max, Math.max(v, lo));
+    render();
+    opts.onInput(lo, hi);
+  });
+
+  render();
+  return {
+    el,
+    set(newLo: number, newHi: number) {
+      if (active !== null) return; // don't fight an in-progress drag
+      lo = newLo;
+      hi = newHi;
+      render();
+    },
+  };
+}
+
+export interface NumberInput {
+  el: HTMLInputElement;
+  set(value: number): void;
+}
+
+/** A compact integer input. */
+export function makeNumberInput(
+  value: number,
+  onChange: (value: number) => void,
+  title = "",
+): NumberInput {
+  const el = document.createElement("input");
+  el.type = "number";
+  el.className = "num-input";
+  el.step = "1";
+  el.value = String(value);
+  if (title) el.title = title;
+  el.addEventListener("change", () => {
+    const v = Math.floor(Number(el.value));
+    if (Number.isFinite(v)) onChange(v >>> 0);
+  });
+  return {
+    el,
+    set(v: number) {
+      if (document.activeElement === el) return;
+      el.value = String(v);
+    },
+  };
+}
+
 export interface DropdownOption<T extends string> {
   value: T;
   label: string;

@@ -2,22 +2,12 @@
  * Center panel: the network visualization.
  *
  * Renders the transformer as 8 pipeline stage-columns processed left to right
- * (titles above each), driven by the training loop's staged sample:
- *
- *   Input | Embeddings | Embed Sum | Q·K·V | Attention | Weighted Sum |
- *   Residual | Output
- *
- * Nothing is ever erased while stepping: weight matrices are always drawn
- * (values normally, ∇ heatmaps while the backward sweep covers them) and
- * activations of stages the forward pass hasn't reached yet are drawn as flat
- * light-gray placeholders. A bar of per-stage rectangles at the bottom marks
- * the active stage (green), with draggable "<>" handles between the bars to
- * resize column widths.
- *
- * Column widths are always laid out for the maximum sequence length, so the
- * layout (and any user resizing) stays stable across samples of different
- * lengths; the "constant-size" option additionally stretches activations
- * vertically/horizontally to fill that footprint.
+ * (titles above each), driven by the training loop's staged sample. Nothing is
+ * erased while stepping: weights always show values (∇ while the backward
+ * sweep covers them) and unreached activations render as light-gray ghosts.
+ * The bottom bar marks the active stage (green) with draggable "<>" handles
+ * between the bars to resize column widths. Run/epoch/sample/phase info lives
+ * in the Status panel (bottom-left), not here.
  */
 
 import type { AppContext } from "../state";
@@ -30,23 +20,22 @@ import {
   DEFAULT_WEIGHT_CMAP,
   type Stops,
 } from "../viz/colormaps";
-import { drawGlyph, drawMatrix } from "../viz/draw";
+import { drawGlyph, drawMatrix, matFixedH, mathLabelW } from "../viz/draw";
 import { tokenChar, tokenColor } from "../tasks/grammar";
 import { isClassification } from "../tasks/types";
 
-const HEADER_H = 46; // space reserved for the DOM header
-const TITLE_ROW_H = 18;
+const TITLE_ROW_H = 24;
 const INDICATOR_H = 13; // ~one text line
 const MARGIN = 10;
 const COL_GAP = 16;
-const MAT_FIXED_H = 22; // badge row + title row per matrix (see viz/draw.ts)
-const GLYPH_ROW_H = 13; // "+" / "=" rows between stacked matrices
 const ROW_GAP = 9; // vertical gap between sub-rows (QKV, embeddings)
 const MIN_COL_W = 30; // resize floor
 const HANDLE_HIT = 10; // px hit radius around a <> handle
+const EMB_GUTTER = 22; // symbols/indices gutter left of the embedding tables
 
 const ACTIVE_GREEN = "#2fbf71";
 const IDLE_GRAY = "#c9d2dc";
+const INK = "#1f2a36";
 
 interface DrawMode {
   /** Show gradients instead of values (backward sweep covers this column). */
@@ -56,7 +45,7 @@ interface DrawMode {
 }
 
 interface ColumnSpec {
-  /** Natural size: cells scale with the global cell size; fixed parts don't. */
+  /** Natural size: cells scale with the cell size; fixed parts don't. */
   wCells: number;
   fixedW: number;
   hCells: number;
@@ -74,16 +63,6 @@ interface ColumnSpec {
 export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandle {
   host.classList.add("panel", "network-view");
   host.innerHTML = "";
-
-  // --- DOM header (top-left) ---
-  const header = document.createElement("div");
-  header.className = "nv-header";
-  const titleEl = document.createElement("div");
-  titleEl.className = "nv-title";
-  const passEl = document.createElement("div");
-  passEl.className = "nv-pass";
-  header.append(titleEl, passEl);
-  host.appendChild(header);
 
   const canvas = document.createElement("canvas");
   canvas.className = "network-canvas";
@@ -166,6 +145,11 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
     const wCmap: Stops = WEIGHT_CMAPS[s.weightsCmap] ?? WEIGHT_CMAPS[DEFAULT_WEIGHT_CMAP];
     const aCmap: Stops = ACT_CMAPS[s.actsCmap] ?? ACT_CMAPS[DEFAULT_ACT_CMAP];
 
+    const font = s.vizFontPx;
+    const matFH = matFixedH(font);
+    const glyphH = font + 5;
+    const mathW = mathLabelW(font);
+
     const n = st.sample.input.length;
     const V = s.numSymbols;
     const d = s.embedDim;
@@ -180,8 +164,6 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
     // Heights stretch to the max footprint only with constant-size on.
     const NH = s.vizConstantSize ? NW : n;
     const rowH = (ch: number) => (ch * NH) / n;
-    // Horizontal stretch for seq-wide matrices (attention): fill the NW-wide
-    // slot when constant-size is on, else draw at natural width.
     const colW = (cw: number) => (s.vizConstantSize ? (cw * NW) / n : cw);
 
     const tokTable = model.embeddings.tokenTable;
@@ -189,102 +171,133 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
     const usedTokenRows = [...new Set(st.sample.input)];
     const usedPosRows = Array.from({ length: n }, (_, i) => i);
 
+    /** One token glyph (char or colored square) centered in a cell box. */
+    const drawTokenGlyph = (
+      gc: CanvasRenderingContext2D,
+      id: number,
+      x: number,
+      y: number,
+      cw: number,
+      chh: number,
+    ) => {
+      if (s.display === "squares") {
+        gc.fillStyle = tokenColor(id, V);
+        gc.fillRect(x, y + 1, cw - 1, chh - 2);
+      } else {
+        gc.fillStyle = INK;
+        gc.font = `${Math.max(8, Math.min(cw, chh) - 3)}px ui-monospace, monospace`;
+        gc.textAlign = "center";
+        gc.textBaseline = "middle";
+        gc.fillText(tokenChar(s.task, id, V), x + cw / 2, y + chh / 2);
+        gc.textAlign = "left";
+        gc.textBaseline = "alphabetic";
+      }
+    };
+
     // 1. Input: token glyphs + one-hot matrix, rows aligned per position.
     const input: ColumnSpec = {
       wCells: 1 + V,
       fixedW: 8,
       hCells: NH,
-      fixedH: MAT_FIXED_H,
+      fixedH: matFH,
       draw(gc, x, y, cw, ch, mode) {
         const rh = rowH(ch);
-        const top = y + 11; // align with the one-hot's cell rows (badge offset)
+        const top = y + font + 4; // align with the one-hot's cell rows
         for (let i = 0; i < n; i++) {
-          const id = st.sample.input[i];
-          if (s.display === "squares") {
-            gc.fillStyle = tokenColor(id, V);
-            gc.fillRect(x, top + i * rh + 1, cw - 1, rh - 2);
-          } else {
-            gc.fillStyle = "#1f2a36";
-            gc.font = `${Math.max(8, Math.min(cw, ch) - 3)}px ui-monospace, monospace`;
-            gc.textAlign = "center";
-            gc.textBaseline = "middle";
-            gc.fillText(tokenChar(s.task, id, V), x + cw / 2, top + i * rh + rh / 2);
-            gc.textAlign = "left";
-            gc.textBaseline = "alphabetic";
-          }
+          drawTokenGlyph(gc, st.sample.input[i], x, top + i * rh, cw, rh);
         }
         drawMatrix(gc, x + cw + 8, y, cw, rh, trace.oneHot, {
           cmap: aCmap,
           kind: "acts",
           ghost: mode.ghost,
-          title: `one-hot (${n}×${V})`,
+          font,
+          title: "one-hot",
         });
       },
     };
 
-    // 2. Embeddings: token + position weight tables, stacked.
+    // 2. Embeddings: token + position weight tables with row-guide gutters —
+    // the vocabulary symbols beside the token table, position integers beside
+    // the position table.
     const embeds: ColumnSpec = {
       wCells: d,
-      fixedW: 0,
+      fixedW: EMB_GUTTER,
       hCells: V + L,
-      fixedH: 2 * MAT_FIXED_H + ROW_GAP,
+      fixedH: 2 * matFH + ROW_GAP,
       draw(gc, x, y, cw, ch, mode) {
-        const a = drawMatrix(gc, x, y, cw, ch, tokTable, {
+        const tx = x + EMB_GUTTER;
+        // Vocabulary symbols beside the token-table rows.
+        const tokTop = y + font + 4;
+        const symW = Math.min(EMB_GUTTER - 6, ch);
+        for (let id = 0; id < V; id++) {
+          drawTokenGlyph(gc, id, x + (EMB_GUTTER - 6 - symW), tokTop + id * ch, symW, ch);
+        }
+        const a = drawMatrix(gc, tx, y, cw, ch, tokTable, {
           cmap: wCmap,
           kind: "weights",
           grad: mode.grad,
-          title: `token table (${V}×${d})`,
+          font,
+          title: "token table",
           outlineRows: usedTokenRows,
         });
-        drawMatrix(gc, x, y + a.h + ROW_GAP, cw, ch, posTable, {
+        // Position integers beside the position-table rows.
+        const py = y + a.h + ROW_GAP;
+        const posTop = py + font + 4;
+        gc.fillStyle = INK;
+        gc.font = `${Math.max(7, Math.min(ch - 1, font))}px ui-monospace, monospace`;
+        gc.textAlign = "right";
+        gc.textBaseline = "middle";
+        for (let p = 0; p < L; p++) {
+          gc.fillText(String(p), x + EMB_GUTTER - 6, posTop + p * ch + ch / 2);
+        }
+        gc.textAlign = "left";
+        gc.textBaseline = "alphabetic";
+        drawMatrix(gc, tx, py, cw, ch, posTable, {
           cmap: wCmap,
           kind: "weights",
           grad: mode.grad,
-          title: `position table (${L}×${d})`,
+          font,
+          title: "position table",
           outlineRows: usedPosRows,
         });
       },
     };
 
-    // Helper for "m1 + m2 = m3" stacked activation columns.
+    // Helper for "m1 + m2 = m3" stacked activation columns with math labels.
+    type Mat = Parameters<typeof drawMatrix>[5];
     const stacked3 = (
-      m1: () => Parameters<typeof drawMatrix>[5],
-      t1: string,
-      m2: () => Parameters<typeof drawMatrix>[5],
-      t2: string,
-      m3: () => Parameters<typeof drawMatrix>[5],
-      t3: string,
+      items: Array<[() => Mat, string, { main: string; sub?: string }]>,
     ): ColumnSpec => ({
       wCells: d,
-      fixedW: 0,
+      fixedW: mathW,
       hCells: 3 * NH,
-      fixedH: 3 * MAT_FIXED_H + 2 * GLYPH_ROW_H,
+      fixedH: 3 * matFH + 2 * glyphH,
       draw(gc, x, y, cw, ch, mode) {
-        const w = d * cw;
         const rh = rowH(ch);
-        const opts = { cmap: aCmap, kind: "acts" as const, grad: mode.grad, ghost: mode.ghost };
+        const opts = { cmap: aCmap, kind: "acts" as const, grad: mode.grad, ghost: mode.ghost, font };
         let yy = y;
-        const s1 = drawMatrix(gc, x, yy, cw, rh, m1(), { ...opts, title: t1 });
-        yy += s1.h;
-        drawGlyph(gc, x + w / 2, yy + GLYPH_ROW_H / 2, "+");
-        yy += GLYPH_ROW_H;
-        const s2 = drawMatrix(gc, x, yy, cw, rh, m2(), { ...opts, title: t2 });
-        yy += s2.h;
-        drawGlyph(gc, x + w / 2, yy + GLYPH_ROW_H / 2, "=");
-        yy += GLYPH_ROW_H;
-        drawMatrix(gc, x, yy, cw, rh, m3(), { ...opts, title: t3 });
+        for (let k = 0; k < items.length; k++) {
+          const [mat, title, label] = items[k];
+          const sz = drawMatrix(gc, x, yy, cw, rh, mat(), {
+            ...opts,
+            title,
+            mathLabel: label,
+          });
+          yy += sz.h;
+          if (k < items.length - 1) {
+            drawGlyph(gc, x + mathW + (d * cw) / 2, yy + glyphH / 2, k === 0 ? "+" : "=");
+            yy += glyphH;
+          }
+        }
       },
     });
 
     // 3. Embed Sum: tok + pos = x.
-    const embedSum = stacked3(
-      () => trace.tok,
-      "tok",
-      () => trace.pos,
-      "pos",
-      () => trace.x,
-      "x = tok + pos",
-    );
+    const embedSum = stacked3([
+      [() => trace.tok, "token embeddings", { main: "E", sub: "tok" }],
+      [() => trace.pos, "position embeddings", { main: "E", sub: "pos" }],
+      [() => trace.x, "x = tok + pos", { main: "x" }],
+    ]);
 
     // 4. Q K V: three rows of W (weights) -> projection (activations).
     const attn = model.attention;
@@ -295,9 +308,9 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
     ];
     const qkv: ColumnSpec = {
       wCells: 2 * d,
-      fixedW: 8,
+      fixedW: 8 + 2 * mathW,
       hCells: 3 * Math.max(d, NH),
-      fixedH: 3 * MAT_FIXED_H + 2 * ROW_GAP,
+      fixedH: 3 * matFH + 2 * ROW_GAP,
       draw(gc, x, y, cw, ch, mode) {
         let yy = y;
         for (const [name, w, act] of qkvRows) {
@@ -306,38 +319,43 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
             cmap: wCmap,
             kind: "weights",
             grad: mode.grad,
-            title: `W_${name} (${d}×${d})`,
+            font,
+            title: `W_${name}·x`,
+            mathLabel: { main: "W", sub: name },
           });
           drawMatrix(gc, x + a.w + 8, yy, cw, rowH(ch), act, {
             cmap: aCmap,
             kind: "acts",
             grad: mode.grad,
             ghost: mode.ghost,
+            font,
             title: name,
+            mathLabel: { main: name },
           });
-          yy += rowCells * ch + MAT_FIXED_H + ROW_GAP;
+          yy += rowCells * ch + matFH + ROW_GAP;
         }
       },
     };
 
-    // 5. Attention: scaled scores + row softmax (n×n, stretching to the NW
-    // footprint when constant-size is on).
+    // 5. Attention: scaled scores + row softmax.
     const attnScores: ColumnSpec = {
       wCells: NW,
-      fixedW: 0,
+      fixedW: mathW,
       hCells: 2 * NH,
-      fixedH: 2 * MAT_FIXED_H + ROW_GAP,
+      fixedH: 2 * matFH + ROW_GAP,
       draw(gc, x, y, cw, ch, mode) {
         const sw = colW(cw);
         const sh = rowH(ch);
-        const opts = { cmap: aCmap, kind: "acts" as const, grad: mode.grad, ghost: mode.ghost };
+        const opts = { cmap: aCmap, kind: "acts" as const, grad: mode.grad, ghost: mode.ghost, font };
         const a = drawMatrix(gc, x, y, sw, sh, trace.attention.scores, {
           ...opts,
           title: "QKᵀ/√d",
+          mathLabel: { main: "S" },
         });
         drawMatrix(gc, x, y + a.h + ROW_GAP, sw, sh, trace.attention.attnW, {
           ...opts,
           title: "softmax rows",
+          mathLabel: { main: "A" },
         });
       },
     };
@@ -345,29 +363,28 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
     // 6. Weighted sum (the lookup's output).
     const weighted: ColumnSpec = {
       wCells: d,
-      fixedW: 0,
+      fixedW: mathW,
       hCells: NH,
-      fixedH: MAT_FIXED_H,
+      fixedH: matFH,
       draw(gc, x, y, cw, ch, mode) {
         drawMatrix(gc, x, y, cw, rowH(ch), trace.attention.out, {
           cmap: aCmap,
           kind: "acts",
           grad: mode.grad,
           ghost: mode.ghost,
-          title: "A·V",
+          font,
+          title: "weighted sum of V",
+          mathLabel: { main: "A·V" },
         });
       },
     };
 
     // 7. Residual: x + attnOut = y.
-    const residual = stacked3(
-      () => trace.x,
-      "x",
-      () => trace.attention.out,
-      "attn out",
-      () => trace.y,
-      "y = x + attn",
-    );
+    const residual = stacked3([
+      [() => trace.x, "embedding sum", { main: "x" }],
+      [() => trace.attention.out, "attention out", { main: "A·V" }],
+      [() => trace.y, "y = x + attn", { main: "y" }],
+    ]);
 
     // 8. Output: (optional FF hidden layer) + W_out + output activations.
     const outActRows = classification ? 1 : NH;
@@ -375,9 +392,9 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
     const hiddenRows = classification ? 1 : NH;
     const output: ColumnSpec = {
       wCells: Math.max(d, outActCols),
-      fixedW: 0,
+      fixedW: mathW,
       hCells: (twoLayer ? d + hiddenRows : 0) + outUnits + outActRows,
-      fixedH: (twoLayer ? 4 : 2) * MAT_FIXED_H + (twoLayer ? 3 : 1) * ROW_GAP,
+      fixedH: (twoLayer ? 4 : 2) * matFH + (twoLayer ? 3 : 1) * ROW_GAP,
       draw(gc, x, y, cw, ch, mode) {
         const outCellH = classification ? ch : rowH(ch);
         let yy = y;
@@ -387,24 +404,20 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
             cmap: wCmap,
             kind: "weights",
             grad: mode.grad,
-            title: `W_ff (${d}×${d})`,
+            font,
+            title: "FF hidden layer",
+            mathLabel: { main: "W", sub: "ff" },
           });
           yy += f.h + ROW_GAP;
-          const hh = drawMatrix(
-            gc,
-            x,
-            yy,
-            cw,
-            classification ? ch : rowH(ch),
-            st.trace.hidden!,
-            {
-              cmap: aCmap,
-              kind: "acts",
-              grad: mode.grad,
-              ghost: mode.ghost,
-              title: "h = relu(W_ff·y)",
-            },
-          );
+          const hh = drawMatrix(gc, x, yy, cw, classification ? ch : rowH(ch), st.trace.hidden!, {
+            cmap: aCmap,
+            kind: "acts",
+            grad: mode.grad,
+            ghost: mode.ghost,
+            font,
+            title: "h = relu(W_ff·y)",
+            mathLabel: { main: "h" },
+          });
           yy += hh.h + ROW_GAP;
         }
 
@@ -412,17 +425,20 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
           cmap: wCmap,
           kind: "weights",
           grad: mode.grad,
-          title: `W_out (${outUnits}×${d})`,
+          font,
+          title: "output projection",
+          mathLabel: { main: "W", sub: "out" },
         });
         yy += a.h + ROW_GAP;
 
         if (mode.grad) {
-          // Gradient of the raw logits — the signal backprop actually uses.
           drawMatrix(gc, x, yy, cw, outCellH, trace.logits, {
             cmap: aCmap,
             kind: "acts",
             grad: true,
+            font,
             title: "∇logits",
+            mathLabel: { main: "ŷ" },
           });
         } else if (classification) {
           const p = 1 / (1 + Math.exp(-trace.logits[0][0].data));
@@ -430,7 +446,9 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
             cmap: aCmap,
             kind: "acts",
             ghost: mode.ghost,
+            font,
             title: `σ(logit) = ${p.toFixed(2)}`,
+            mathLabel: { main: "ŷ" },
           });
         } else {
           const probs = trace.logits.map((row) => softmaxNums(row.map((v) => v.data)));
@@ -438,7 +456,9 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
             cmap: aCmap,
             kind: "acts",
             ghost: mode.ghost,
+            font,
             title: "softmax(logits)",
+            mathLabel: { main: "ŷ" },
           });
         }
       },
@@ -459,27 +479,7 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, w, h);
 
-    const loop = ctx.state.loop;
-    const st = loop.staged;
-
-    // Header text.
-    titleEl.textContent = st
-      ? `Network Visualization - Epoch ${loop.epoch} - Sample #${st.sample.index}`
-      : "Network Visualization";
-    passEl.className = "nv-pass " + (st ? st.phase : "idle");
-    if (!st) {
-      passEl.textContent = "Press Step to begin";
-    } else if (st.phase === "forward") {
-      passEl.textContent = "Forward Pass";
-    } else if (st.phase === "backward") {
-      passEl.textContent = "Backpropagation Pass";
-    } else {
-      const loss = st.lossValue.data.toFixed(3);
-      passEl.textContent = ctx.state.running
-        ? `Training continuously · loss ${loss}`
-        : `Iteration complete · loss ${loss}`;
-    }
-
+    const st = ctx.state.loop.staged;
     if (!st) {
       g.fillStyle = "#9aa7b4";
       g.font = "13px system-ui, sans-serif";
@@ -500,7 +500,7 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
     const fixedSum = cols.reduce((a, c) => a + c.fixedW, 0);
     const availContentW = Math.max(50, w - 2 * MARGIN - gaps - fixedSum);
     const totalWCells = cols.reduce((a, c) => a + c.wCells, 0);
-    const contentTop = HEADER_H + TITLE_ROW_H;
+    const contentTop = MARGIN + TITLE_ROW_H;
     const contentH = h - contentTop - INDICATOR_H - 2 * MARGIN;
 
     // Columns spread across ALL the horizontal space (proportional to their
@@ -529,19 +529,16 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
       const wFit = (colWpx - c.fixedW) / Math.max(1, c.wCells);
       const hFit = (contentH - c.fixedH) / Math.max(1, c.hCells);
       const cell = Math.max(2, Math.floor(Math.min(wFit, hFit)));
-      // Center the drawn content within the allocated column width.
       const drawnW = c.wCells * cell + c.fixedW;
       const dx = Math.max(0, (colWpx - drawnW) / 2);
 
-      // Stage title.
-      g.fillStyle = isActive ? ACTIVE_GREEN : "#5a6675";
-      g.font = `${isActive ? "bold " : ""}11px system-ui, sans-serif`;
+      // Stage title — larger, dark; active stage in green.
+      g.fillStyle = isActive ? ACTIVE_GREEN : INK;
+      g.font = "bold 14px system-ui, sans-serif";
       g.textAlign = "center";
-      g.fillText(PIPELINE_STAGES[i].title, x + colWpx / 2, HEADER_H + 12, colWpx + COL_GAP - 4);
+      g.fillText(PIPELINE_STAGES[i].title, x + colWpx / 2, MARGIN + 14, colWpx + COL_GAP - 4);
       g.textAlign = "left";
 
-      // Column content — always drawn. Forward: unreached activations ghost.
-      // Backward: columns the sweep covers (>= active) show gradients.
       const mode: DrawMode =
         phase === "forward"
           ? { grad: false, ghost: i > active }

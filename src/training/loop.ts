@@ -11,10 +11,12 @@ import { Value } from "../engine/value";
 import { crossEntropy, sum } from "../engine/ops";
 import { TransformerModel, type ForwardTrace } from "../model/transformer";
 import { SGD } from "./optimizer";
+import { Rng } from "../util/rng";
 import { isClassification } from "../tasks/types";
 import type { Dataset, Example } from "../tasks/types";
 
-export type StepGranularity = "layer" | "iteration" | "epoch" | "run";
+/** "epochs" = continuous training that only refreshes the UI per epoch. */
+export type StepGranularity = "layer" | "iteration" | "epoch" | "run" | "epochs";
 /** "complete" = a whole-sample step (iteration/epoch/run) finished training
  *  this sample; the viz shows the full pipeline, no active stage. */
 export type PassPhase = "forward" | "backward" | "complete";
@@ -53,6 +55,19 @@ export interface LossPoint {
   testLoss: number | null;
 }
 
+/** Everything needed to continue a run exactly where it left off
+ *  (sample-boundary granularity; weights are saved separately). */
+export interface LoopSnapshotData {
+  iterHistory: LossPoint[];
+  epochHistory: LossPoint[];
+  iteration: number;
+  epoch: number;
+  cursor: number;
+  order: number[];
+  epochIterStart: number;
+  rngState: number;
+}
+
 export class TrainingLoop {
   iteration = 0;
   epoch = 0;
@@ -72,16 +87,25 @@ export class TrainingLoop {
     private readonly model: TransformerModel,
     private readonly optim: SGD,
     private readonly data: Dataset,
-    private readonly rng: () => number = Math.random,
+    private readonly rng: Rng = new Rng((Math.random() * 2 ** 32) >>> 0),
   ) {
     this.reshuffle();
+  }
+
+  /** Position within the current epoch (for progress display). */
+  get cursorPos(): number {
+    return this.cursor;
+  }
+
+  get trainSize(): number {
+    return this.data.train.length;
   }
 
   /** Fisher-Yates shuffle of the train-set visit order (called each epoch). */
   private reshuffle(): void {
     this.order = this.data.train.map((_, i) => i);
     for (let i = this.order.length - 1; i > 0; i--) {
-      const j = Math.floor(this.rng() * (i + 1));
+      const j = Math.floor(this.rng.next() * (i + 1));
       [this.order[i], this.order[j]] = [this.order[j], this.order[i]];
     }
   }
@@ -89,6 +113,35 @@ export class TrainingLoop {
   /** The next train sample in this epoch's shuffled order. */
   private nextSample(): Example {
     return this.data.train[this.order[this.cursor]];
+  }
+
+  /** Capture continuation state (histories, counters, order, RNG). */
+  serialize(): LoopSnapshotData {
+    return {
+      iterHistory: this.iterHistory.map((p) => ({ ...p })),
+      epochHistory: this.epochHistory.map((p) => ({ ...p })),
+      iteration: this.iteration,
+      epoch: this.epoch,
+      cursor: this.cursor,
+      order: [...this.order],
+      epochIterStart: this.epochIterStart,
+      rngState: this.rng.state,
+    };
+  }
+
+  /** Restore a serialized continuation state (after weights are loaded). */
+  restore(h: LoopSnapshotData): void {
+    this.iterHistory.length = 0;
+    for (const p of h.iterHistory) this.iterHistory.push({ ...p });
+    this.epochHistory.length = 0;
+    for (const p of h.epochHistory) this.epochHistory.push({ ...p });
+    this.iteration = h.iteration;
+    this.epoch = h.epoch;
+    this.cursor = h.cursor;
+    this.order = [...h.order];
+    this.epochIterStart = h.epochIterStart;
+    this.rng.state = h.rngState;
+    this.staged = null;
   }
 
   /** Loss for already-computed logits. */
@@ -206,8 +259,12 @@ export class TrainingLoop {
    * Train on the next single sample (whole iteration at once). Leaves a
    * fully-revealed "complete" snapshot for the network view, so the pipeline
    * animates as samples fly by in iteration/epoch/continuous modes.
+   *
+   * @param snapshot pass false (fast "epochs" mode) to skip the snapshot
+   *   except on the epoch's final sample, so each epoch still ends with its
+   *   last sample on display.
    */
-  stepIteration(): void {
+  stepIteration(snapshot = true): void {
     if (this.data.train.length === 0) return;
     const sample = this.nextSample();
     const result = this.model.forward(sample.input);
@@ -215,13 +272,15 @@ export class TrainingLoop {
     this.model.zeroGrad();
     lossValue.backward();
     this.optim.step();
-    this.staged = {
-      sample,
-      trace: result.trace,
-      lossValue,
-      phase: "complete",
-      stage: PIPELINE_STAGES.length - 1,
-    };
+    if (snapshot || this.cursor === this.data.train.length - 1) {
+      this.staged = {
+        sample,
+        trace: result.trace,
+        lossValue,
+        phase: "complete",
+        stage: PIPELINE_STAGES.length - 1,
+      };
+    }
     this.finishSample(lossValue.data);
   }
 

@@ -14,11 +14,15 @@ import {
   makeButton,
   makeCheckbox,
   makeDropdown,
+  makeNumberInput,
   makeRadioGroup,
+  makeRangeSlider,
   makeSlider,
   type Checkbox,
   type Dropdown,
+  type NumberInput,
   type RadioGroup,
+  type RangeSlider,
   type Slider,
 } from "./controls";
 import type { PanelHandle } from "./top-panel";
@@ -69,13 +73,15 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
   vocabRow.className = "control-pair";
   vocabRow.append(vocabSlider.el, vocabPreview);
 
-  const maxLenSlider: Slider = makeSlider({
-    label: "Max sequence length",
+  // Dual slider: min and max sequence length on one axis.
+  const lenSlider: RangeSlider = makeRangeSlider({
+    label: "Sequence length",
     min: 2,
     max: MAX_SEQ_LEN_LIMIT,
     step: 1,
-    value: ctx.state.maxSeqLen,
-    onInput: (v) => ctx.apply({ maxSeqLen: v }),
+    lo: ctx.state.minSeqLen,
+    hi: ctx.state.maxSeqLen,
+    onInput: (lo, hi) => ctx.apply({ minSeqLen: lo, maxSeqLen: hi }),
   });
   const fixedLenCheck: Checkbox = makeCheckbox(
     "All max length",
@@ -86,7 +92,7 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
 
   const lenRow = document.createElement("div");
   lenRow.className = "control-pair";
-  lenRow.append(maxLenSlider.el, fixedLenCheck.el);
+  lenRow.append(lenSlider.el, fixedLenCheck.el);
   const countSlider: Slider = makeSlider({
     label: "Examples",
     min: 10,
@@ -106,7 +112,23 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
     format: (v) => `${v}% test`,
     onInput: (v) => ctx.apply({ trainTestSplit: v / 100 }),
   });
+  // Regenerate (compact) + seed entry + random-seed checkbox, one row.
   const regenBtn = makeButton("Regenerate", () => ctx.regenerate());
+  regenBtn.classList.add("btn-compact");
+  const seedInput: NumberInput = makeNumberInput(
+    ctx.state.seed,
+    (v) => ctx.apply({ seed: v }),
+    "Random seed (reproducibility) — applied on Regenerate",
+  );
+  const randomCheck: Checkbox = makeCheckbox(
+    "random",
+    ctx.state.randomSeed,
+    (c) => ctx.apply({ randomSeed: c }),
+  );
+  randomCheck.el.title = "Draw a fresh random seed on every Regenerate";
+  const regenRow = document.createElement("div");
+  regenRow.className = "regen-row";
+  regenRow.append(regenBtn, seedInput.el, randomCheck.el);
 
   const viewDropdown: Dropdown<DatasetView> = makeDropdown(
     [
@@ -131,7 +153,7 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
     lenRow,
     countSlider.el,
     splitSlider.el,
-    regenBtn,
+    regenRow,
     viewRow,
   );
   host.appendChild(controls);
@@ -249,10 +271,13 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
     summary.textContent = datasetSummary(s.dataset);
     displayRadios.set(s.display);
     vocabSlider.set(s.numSymbols);
-    maxLenSlider.set(s.maxSeqLen);
+    lenSlider.set(s.minSeqLen, s.maxSeqLen);
     fixedLenCheck.set(s.fixedLength);
     countSlider.set(s.numExamples);
     splitSlider.set(Math.round(s.trainTestSplit * 100));
+    seedInput.set(s.seed);
+    seedInput.el.disabled = s.randomSeed;
+    randomCheck.set(s.randomSeed);
     viewDropdown.set(s.datasetView);
     renderVocab();
 

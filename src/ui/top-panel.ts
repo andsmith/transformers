@@ -5,6 +5,7 @@
  */
 
 import type { AppContext } from "../state";
+import { modelSummary } from "../state";
 import { VERSION } from "../version";
 import type { Task } from "../tasks/types";
 import { ALL_TASKS, TASK_SPECS } from "../tasks/types";
@@ -146,13 +147,36 @@ export function mountTopPanel(host: HTMLElement, ctx: AppContext): PanelHandle {
   cmapBox.append(cmapRow);
   row.appendChild(cmapBox);
 
+  // --- font sizes ---
+  const fontBox = makeFieldset("Fonts");
+  const uiFontSlider: Slider = makeSlider({
+    label: "UI labels",
+    min: 10,
+    max: 16,
+    step: 1,
+    value: ctx.state.uiFontPx,
+    onInput: (v) => ctx.apply({ uiFontPx: v }),
+  });
+  const vizFontSlider: Slider = makeSlider({
+    label: "Viz captions",
+    min: 7,
+    max: 14,
+    step: 1,
+    value: ctx.state.vizFontPx,
+    onInput: (v) => ctx.apply({ vizFontPx: v }),
+  });
+  const fontRow = document.createElement("div");
+  fontRow.className = "fieldset-row";
+  uiFontSlider.el.classList.add("slider-short");
+  vizFontSlider.el.classList.add("slider-short");
+  fontRow.append(uiFontSlider.el, vizFontSlider.el);
+  fontBox.append(fontRow);
+  row.appendChild(fontBox);
+
   function update(): void {
     const s = ctx.state;
-    const pe = s.peScheme === "sinusoidal" ? "positional" : "learned";
     title.textContent =
-      `Transformer Playground - Version ${VERSION} - task: ${s.task} - ` +
-      `|V| = ${s.numSymbols} - Model(D_embed=${s.embedDim}, P_embed=${pe}, ` +
-      `FF-layers=${s.numOutputLayers})`;
+      `Transformer Playground - Version ${VERSION} - ${modelSummary(s)}`;
     host.classList.toggle("collapsed", s.topCollapsed);
     row.style.display = s.topCollapsed ? "none" : "";
     collapseBtn.textContent = s.topCollapsed ? "▼ controls" : "▲ hide";
@@ -164,6 +188,8 @@ export function mountTopPanel(host: HTMLElement, ctx: AppContext): PanelHandle {
     lrSlider.set(Math.log10(s.learningRate));
     weightsCmapDd.set(s.weightsCmap);
     actsCmapDd.set(s.actsCmap);
+    uiFontSlider.set(s.uiFontPx);
+    vizFontSlider.set(s.vizFontPx);
   }
 
   update();

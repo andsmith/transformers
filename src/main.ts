@@ -16,7 +16,10 @@ import { mountDatasetPanel } from "./ui/dataset-panel";
 import { mountLossPanel } from "./ui/loss-panel";
 import { mountNetworkView } from "./ui/network-view";
 import { mountRunControls } from "./ui/run-controls";
+import { mountStatusPanel } from "./ui/status-panel";
+import { mountHistoryPanel } from "./ui/history-panel";
 import { mountSplitters } from "./ui/splitters";
+import { applySave, type SaveFile } from "./persist";
 import { VERSION } from "./version";
 
 /** Patch keys that require tearing down and rebuilding model + dataset. */
@@ -27,6 +30,7 @@ const REBUILD_KEYS = new Set<keyof AppState>([
   "peScheme",
   "numOutputLayers",
   "numExamples",
+  "minSeqLen",
   "maxSeqLen",
   "fixedLength",
   "trainTestSplit",
@@ -37,6 +41,8 @@ const REBUILD_KEYS = new Set<keyof AppState>([
  *  than a fixed step count to keep the UI responsive. */
 const RUN_FRAME_BUDGET_MS = 24;
 const RUN_MAX_STEPS_PER_FRAME = 50;
+/** "Run by epochs" trains harder per frame and redraws only per epoch. */
+const EPOCHS_FRAME_BUDGET_MS = 40;
 
 window.addEventListener("DOMContentLoaded", () => {
   const root = document.getElementById("app");
@@ -55,8 +61,15 @@ window.addEventListener("DOMContentLoaded", () => {
 
   const topHost = section("top");
   const centerHost = section("center");
-  const lossHost = section("loss");
-  root.append(leftHost, topHost, centerHost, lossHost);
+  // Bottom row: Status | History | Loss.
+  const bottomHost = section("loss");
+  bottomHost.className = "bottom-row";
+  const statusHost = document.createElement("div");
+  const historyHost = document.createElement("div");
+  const lossHost = document.createElement("div");
+  lossHost.className = "loss-host";
+  bottomHost.append(statusHost, historyHost, lossHost);
+  root.append(leftHost, topHost, centerHost, bottomHost);
   mountSplitters(root);
 
   function section(area: string): HTMLElement {
@@ -73,6 +86,8 @@ window.addEventListener("DOMContentLoaded", () => {
   let loss: PanelHandle;
   let network: PanelHandle;
   let run: PanelHandle;
+  let status: PanelHandle;
+  let history: PanelHandle;
 
   function refreshAll(): void {
     top.update();
@@ -80,6 +95,11 @@ window.addEventListener("DOMContentLoaded", () => {
     loss.update();
     network.update();
     run.update();
+    status.update();
+    history.update();
+    // Collapsing the loss row hides its companions too.
+    statusHost.style.display = state.lossCollapsed ? "none" : "";
+    historyHost.style.display = state.lossCollapsed ? "none" : "";
   }
 
   function doRebuild(): void {
@@ -98,9 +118,16 @@ window.addEventListener("DOMContentLoaded", () => {
     apply(patch) {
       Object.assign(state, patch);
       if ("learningRate" in patch) state.optim.setLearningRate(state.learningRate);
-      // Leaving "run" granularity stops a continuous run.
-      if ("stepGranularity" in patch && patch.stepGranularity !== "run") {
+      // Leaving a continuous granularity stops the run.
+      if (
+        "stepGranularity" in patch &&
+        patch.stepGranularity !== "run" &&
+        patch.stepGranularity !== "epochs"
+      ) {
         state.running = false;
+      }
+      if ("uiFontPx" in patch) {
+        root.style.setProperty("--ui-font-px", `${state.uiFontPx}px`);
       }
       // Collapsing panels resizes their grid rows (main owns the grid).
       if ("topCollapsed" in patch) {
@@ -126,13 +153,15 @@ window.addEventListener("DOMContentLoaded", () => {
       refreshAll();
     },
     regenerate() {
-      state.seed = (state.seed + 1) >>> 0;
+      // Deterministic mode reuses the entered seed (reproducible); random mode
+      // draws a fresh one each time (and displays it).
+      if (state.randomSeed) state.seed = (Math.random() * 2 ** 32) >>> 0;
       state.running = false;
       doRebuild();
       refreshAll();
     },
     step() {
-      if (state.stepGranularity === "run") {
+      if (state.stepGranularity === "run" || state.stepGranularity === "epochs") {
         state.running = !state.running;
         run.update();
         return;
@@ -143,6 +172,17 @@ window.addEventListener("DOMContentLoaded", () => {
       else if (state.stepGranularity === "epoch") state.loop.stepEpoch();
       refreshAll();
     },
+    loadSave(json) {
+      let parsed: SaveFile;
+      try {
+        parsed = JSON.parse(json) as SaveFile;
+      } catch {
+        return "File is not valid JSON.";
+      }
+      const err = applySave(parsed, state, doRebuild);
+      refreshAll();
+      return err;
+    },
   };
 
   top = mountTopPanel(topHost, ctx);
@@ -150,8 +190,11 @@ window.addEventListener("DOMContentLoaded", () => {
   loss = mountLossPanel(lossHost, ctx);
   network = mountNetworkView(centerHost, ctx);
   run = mountRunControls(runHost, ctx); // top of the left column
+  status = mountStatusPanel(statusHost, ctx);
+  history = mountHistoryPanel(historyHost, ctx);
 
   // --- animation loop ---
+  let lastDrawnEpoch = -1;
   const tick = () => {
     if (state.running && state.stepGranularity === "run") {
       const t0 = performance.now();
@@ -164,9 +207,31 @@ window.addEventListener("DOMContentLoaded", () => {
         steps++;
       }
       run.update(); // refresh counters/button
+      loss.update();
+      network.update();
+      status.update();
+      history.update();
+    } else if (state.running && state.stepGranularity === "epochs") {
+      // Fastest mode: bigger budget, no per-sample snapshots (except each
+      // epoch's last sample), and the UI redraws only at epoch boundaries.
+      const t0 = performance.now();
+      while (performance.now() - t0 < EPOCHS_FRAME_BUDGET_MS) {
+        state.loop.stepIteration(false);
+      }
+      if (state.loop.epoch !== lastDrawnEpoch) {
+        lastDrawnEpoch = state.loop.epoch;
+        run.update();
+        loss.update();
+        network.update();
+        status.update();
+        history.update();
+      }
+    } else {
+      loss.update();
+      network.update();
+      status.update();
+      history.update();
     }
-    loss.update();
-    network.update();
     requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);

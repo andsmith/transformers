@@ -12,6 +12,7 @@ import { generateDataset } from "../src/tasks/datasets";
 import { TransformerModel } from "../src/model/transformer";
 import { SGD } from "../src/training/optimizer";
 import { TrainingLoop, PIPELINE_STAGES } from "../src/training/loop";
+import { Rng } from "../src/util/rng";
 
 function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
   const dataset = generateDataset({
@@ -39,13 +40,11 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
     })(),
   );
   const optim = new SGD(model.store, { learningRate: 0.1 });
-  let s2 = 99;
-  const shuffleRng = () => ((s2 = (s2 * 16807) % 2147483647) / 2147483647);
   return {
     dataset,
     model,
     optim,
-    loop: new TrainingLoop(model, optim, dataset, shuffleRng),
+    loop: new TrainingLoop(model, optim, dataset, new Rng(99)),
   };
 }
 
@@ -123,6 +122,65 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
   const st = loop.staged!;
   if (st.phase !== "forward" || st.stage !== 0) throw new Error("next sample did not start at forward/0");
   console.log("staging: forward 0..7, backward 7..0, finalize+restart OK");
+}
+
+// --- 3. save/load round-trip: weights + history + rng restore must continue
+// the EXACT same run (identical loss sequence) as the original.
+{
+  const a = build("copy");
+  for (let i = 0; i < 100; i++) a.loop.stepIteration();
+
+  // "Save": capture weights + loop snapshot (what persist.buildSave stores).
+  const weights: Record<string, number[][]> = {};
+  for (const p of a.model.store.params) {
+    weights[p.name] = p.values.map((row) => row.map((v) => v.data));
+  }
+  const hist = a.loop.serialize();
+
+  // "Load": fresh build with the same config/seed, then restore.
+  const b = build("copy");
+  for (const p of b.model.store.params) {
+    const w = weights[p.name];
+    if (!w) throw new Error(`missing weights for ${p.name}`);
+    for (let r = 0; r < p.rows; r++) {
+      for (let c = 0; c < p.cols; c++) p.values[r][c].data = w[r][c];
+    }
+  }
+  b.loop.restore(hist);
+
+  // Continue both 50 steps — losses must match exactly.
+  for (let i = 0; i < 50; i++) {
+    a.loop.stepIteration();
+    b.loop.stepIteration();
+  }
+  const la = a.loop.iterHistory.slice(-50).map((p) => p.trainLoss);
+  const lb = b.loop.iterHistory.slice(-50).map((p) => p.trainLoss);
+  for (let i = 0; i < 50; i++) {
+    if (la[i] !== lb[i]) {
+      throw new Error(`round-trip diverged at step ${i}: ${la[i]} vs ${lb[i]}`);
+    }
+  }
+  if (b.loop.iteration !== a.loop.iteration) throw new Error("iteration mismatch after restore");
+  console.log("save/load round-trip: 50 continued steps identical OK");
+}
+
+// --- 4. min sequence length honored ---
+{
+  const ds = generateDataset({
+    task: "copy",
+    vocabSize: 4,
+    count: 200,
+    testFraction: 0,
+    seed: 5,
+    minLen: 4,
+    maxLen: 6,
+  });
+  for (const ex of ds.examples) {
+    if (ex.input.length < 4 || ex.input.length > 6) {
+      throw new Error(`length ${ex.input.length} outside [4,6]`);
+    }
+  }
+  console.log("min/max sequence length honored OK");
 }
 
 console.log("SMOKE OK");

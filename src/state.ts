@@ -4,12 +4,13 @@
  * after `main.ts` mutates it (the whiteboard_web convention).
  */
 
-import { generateDataset, mulberry32, MIN_LEN } from "./tasks/datasets";
+import { generateDataset, mulberry32 } from "./tasks/datasets";
 import type { Dataset, Task } from "./tasks/types";
 import type { PEScheme } from "./model/embeddings";
 import { TransformerModel } from "./model/transformer";
 import { SGD } from "./training/optimizer";
 import { TrainingLoop, type StepGranularity } from "./training/loop";
+import { Rng } from "./util/rng";
 
 export type DisplayMode = "chars" | "squares";
 export type LossView = "iteration" | "epoch";
@@ -30,10 +31,12 @@ export interface AppState {
   // --- dataset controls ---
   display: DisplayMode;
   numExamples: number; // 10..5000
+  minSeqLen: number; // shortest generated sequence
   maxSeqLen: number; // longest generated sequence
   fixedLength: boolean; // if true, every sequence is exactly maxSeqLen
   trainTestSplit: number; // 0..0.5 (fraction held out for test)
   seed: number;
+  randomSeed: boolean; // Regenerate draws a fresh random seed each time
   dataset: Dataset;
 
   // --- model + training (rebuilt when hyperparameters change) ---
@@ -60,6 +63,10 @@ export interface AppState {
   // --- collapsible panels ---
   topCollapsed: boolean; // top controls strip
   lossCollapsed: boolean; // loss plot
+
+  // --- font sizes ---
+  uiFontPx: number; // UI labels (everything but titles)
+  vizFontPx: number; // visualization captions
 }
 
 /**
@@ -71,10 +78,12 @@ export interface AppContext {
   readonly state: AppState;
   /** Merge a patch into state (rebuilding model/data if needed) and refresh UI. */
   apply(patch: Partial<AppState>): void;
-  /** Bump the seed and regenerate dataset + model. */
+  /** Regenerate dataset + model (drawing a fresh seed if randomSeed is on). */
   regenerate(): void;
   /** Advance the computation, or toggle continuous running (granularity-dependent). */
   step(): void;
+  /** Apply a parsed save file (JSON text). Returns an error message or null. */
+  loadSave(json: string): string | null;
 }
 
 export interface Defaults {
@@ -85,6 +94,7 @@ export interface Defaults {
   numOutputLayers: 1 | 2;
   learningRate: number;
   numExamples: number;
+  minSeqLen: number;
   maxSeqLen: number;
   fixedLength: boolean;
   trainTestSplit: number;
@@ -98,10 +108,26 @@ const DEFAULTS: Defaults = {
   numOutputLayers: 1,
   learningRate: 0.05,
   numExamples: 100,
+  minSeqLen: 3,
   maxSeqLen: 7,
   fixedLength: false,
   trainTestSplit: 0.2,
 };
+
+/** One-line model/experiment summary (top title + Status panel). */
+export function modelSummary(s: {
+  task: Task;
+  numSymbols: number;
+  embedDim: number;
+  peScheme: PEScheme;
+  numOutputLayers: 1 | 2;
+}): string {
+  const pe = s.peScheme === "sinusoidal" ? "positional" : "learned";
+  return (
+    `task: ${s.task} - |V| = ${s.numSymbols} - ` +
+    `Model(D_embed=${s.embedDim}, P_embed=${pe}, FF-layers=${s.numOutputLayers})`
+  );
+}
 
 /** (Re)build dataset, model, optimizer and training loop from the given state. */
 export function rebuild(state: {
@@ -112,6 +138,7 @@ export function rebuild(state: {
   numOutputLayers: 1 | 2;
   learningRate: number;
   numExamples: number;
+  minSeqLen: number;
   maxSeqLen: number;
   fixedLength: boolean;
   trainTestSplit: number;
@@ -123,9 +150,9 @@ export function rebuild(state: {
   loop: TrainingLoop;
 } {
   // When fixedLength is on every sequence is exactly maxSeqLen; otherwise they
-  // vary from MIN_LEN up to maxSeqLen (clamped so min never exceeds max).
+  // vary within [minSeqLen, maxSeqLen] (clamped so min never exceeds max).
   const maxLen = state.maxSeqLen;
-  const minLen = state.fixedLength ? maxLen : Math.min(MIN_LEN, maxLen);
+  const minLen = state.fixedLength ? maxLen : Math.min(state.minSeqLen, maxLen);
 
   const dataset = generateDataset({
     task: state.task,
@@ -152,8 +179,8 @@ export function rebuild(state: {
     rng,
   );
   const optim = new SGD(model.store, { learningRate: state.learningRate });
-  // Separate RNG stream for the per-epoch sample-order shuffle.
-  const loop = new TrainingLoop(model, optim, dataset, mulberry32(state.seed ^ 0x51ed270b));
+  // Separate (serializable) RNG stream for the per-epoch sample-order shuffle.
+  const loop = new TrainingLoop(model, optim, dataset, new Rng(state.seed ^ 0x51ed270b));
 
   return { dataset, model, optim, loop };
 }
@@ -168,6 +195,7 @@ export function createInitialState(): AppState {
     running: false,
     display: "chars",
     seed,
+    randomSeed: false,
     lossView: "iteration",
     lossLogScale: false,
     datasetView: "train",
@@ -176,6 +204,8 @@ export function createInitialState(): AppState {
     vizConstantSize: false,
     topCollapsed: false,
     lossCollapsed: false,
+    uiFontPx: 12,
+    vizFontPx: 9,
     ...built,
   };
 }
