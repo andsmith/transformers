@@ -220,11 +220,27 @@ window.addEventListener("DOMContentLoaded", () => {
   let lastDrawnEpoch = -1;
   let tickAccum = 0;
   let lastFrameT = performance.now();
+  // Throughput sampler: record samples/sec into the loop's timing history at
+  // most once per second (skipped when no training happened in the window).
+  let spsLastT = performance.now();
+  let spsLastIter = 0;
 
   const tick = () => {
     const now = performance.now();
     const dt = now - lastFrameT;
     lastFrameT = now;
+
+    if (now - spsLastT >= 1000) {
+      const delta = state.loop.iteration - spsLastIter;
+      if (delta > 0) {
+        state.loop.timingHistory.push({
+          x: state.loop.iteration,
+          sps: (delta * 1000) / (now - spsLastT),
+        });
+      }
+      spsLastT = now;
+      spsLastIter = state.loop.iteration;
+    }
 
     let redraw = true;
     if (state.running) {

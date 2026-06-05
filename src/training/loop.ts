@@ -55,6 +55,14 @@ export interface LossPoint {
   testLoss: number | null;
 }
 
+/** Training throughput sample (recorded ~once per second while running). */
+export interface TimingPoint {
+  /** Iteration count when the sample was taken. */
+  x: number;
+  /** Samples (iterations) per second over the preceding window. */
+  sps: number;
+}
+
 /** Everything needed to continue a run exactly where it left off
  *  (sample-boundary granularity; weights are saved separately). */
 export interface LoopSnapshotData {
@@ -66,6 +74,8 @@ export interface LoopSnapshotData {
   order: number[];
   epochIterStart: number;
   rngState: number;
+  /** Optional (added in 0.0.22); older saves simply lack it. */
+  timingHistory?: TimingPoint[];
 }
 
 export class TrainingLoop {
@@ -78,6 +88,8 @@ export class TrainingLoop {
   /** Per-iteration and per-epoch loss history (read by the loss panel). */
   readonly iterHistory: LossPoint[] = [];
   readonly epochHistory: LossPoint[] = [];
+  /** Throughput history (samples/sec), pushed by the app's tick sampler. */
+  readonly timingHistory: TimingPoint[] = [];
   /** Index into iterHistory where the current epoch began (for epoch means). */
   private epochIterStart = 0;
   /** In-progress per-stage walkthrough (null between samples). */
@@ -120,6 +132,7 @@ export class TrainingLoop {
     return {
       iterHistory: this.iterHistory.map((p) => ({ ...p })),
       epochHistory: this.epochHistory.map((p) => ({ ...p })),
+      timingHistory: this.timingHistory.map((p) => ({ ...p })),
       iteration: this.iteration,
       epoch: this.epoch,
       cursor: this.cursor,
@@ -140,6 +153,8 @@ export class TrainingLoop {
     for (const p of prev.iterHistory) this.iterHistory.push(p);
     this.epochHistory.length = 0;
     for (const p of prev.epochHistory) this.epochHistory.push(p);
+    this.timingHistory.length = 0;
+    for (const p of prev.timingHistory) this.timingHistory.push(p);
     this.iteration = prev.iteration;
     this.epoch = prev.epoch;
     this.epochIterStart = prev.epochIterStart;
@@ -151,6 +166,8 @@ export class TrainingLoop {
     for (const p of h.iterHistory) this.iterHistory.push({ ...p });
     this.epochHistory.length = 0;
     for (const p of h.epochHistory) this.epochHistory.push({ ...p });
+    this.timingHistory.length = 0;
+    for (const p of h.timingHistory ?? []) this.timingHistory.push({ ...p });
     this.iteration = h.iteration;
     this.epoch = h.epoch;
     this.cursor = h.cursor;

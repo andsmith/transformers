@@ -1,29 +1,49 @@
 /**
- * History panel: a small, roughly square, always-full-range plot of the
- * per-epoch loss (train + test). No zoom, no controls, no x labels — a global
- * reminder of overall progress, regardless of how the main loss plot is
- * zoomed or configured.
+ * History panel: a small, roughly square, always-full-range plot toggling
+ * between per-epoch LOSS (train + test) and TIMING (samples/sec over the run).
+ * No zoom, no x labels — a global reminder of overall progress. The button in
+ * the header shows (and switches) which series is displayed.
  */
 
 import type { AppContext } from "../state";
-import type { LossPoint } from "../training/loop";
 import type { PanelHandle } from "./top-panel";
 
 const TRAIN_COLOR = "#2b7cff";
 const TEST_COLOR = "#ff6b35";
+const TIMING_COLOR = "#5b3fa8";
+
+type HistoryMode = "loss" | "timing";
 
 export function mountHistoryPanel(host: HTMLElement, ctx: AppContext): PanelHandle {
   host.classList.add("panel", "history-panel");
   host.innerHTML = "";
 
+  let mode: HistoryMode = "loss";
+
+  const head = document.createElement("div");
+  head.className = "history-head";
   const title = document.createElement("div");
   title.className = "panel-header";
   title.textContent = "History";
+  const modeBtn = document.createElement("button");
+  modeBtn.className = "collapse-btn";
+  modeBtn.title = "Toggle between loss and timing history";
+  modeBtn.addEventListener("click", () => {
+    mode = mode === "loss" ? "timing" : "loss";
+    setModeLabel();
+    draw();
+  });
+  head.append(title, modeBtn);
 
   const canvas = document.createElement("canvas");
   canvas.className = "history-canvas";
-  host.append(title, canvas);
+  host.append(head, canvas);
   const g = canvas.getContext("2d")!;
+
+  function setModeLabel(): void {
+    modeBtn.textContent = mode === "loss" ? "loss" : "samples/s";
+  }
+  setModeLabel();
 
   function draw(): void {
     const dpr = window.devicePixelRatio || 1;
@@ -44,32 +64,58 @@ export function mountHistoryPanel(host: HTMLElement, ctx: AppContext): PanelHand
     g.lineWidth = 1;
     g.strokeRect(pad + 0.5, pad + 0.5, plotW - 1, plotH - 1);
 
-    const data = ctx.state.loop.epochHistory;
-    if (data.length === 0) {
+    const empty = (msg: string) => {
       g.fillStyle = "#9aa7b4";
       g.font = "10px system-ui, sans-serif";
       g.textAlign = "center";
-      g.fillText("per-epoch loss", w / 2, h / 2);
+      g.fillText(msg, w / 2, h / 2);
       g.textAlign = "left";
-      return;
+    };
+
+    type Pt = { x: number; ys: (number | null)[] };
+    let pts: Pt[];
+    let colors: string[];
+    if (mode === "loss") {
+      const data = ctx.state.loop.epochHistory;
+      if (data.length === 0) {
+        empty("per-epoch loss");
+        return;
+      }
+      pts = data.map((p) => ({ x: p.x, ys: [p.trainLoss, p.testLoss] }));
+      colors = [TRAIN_COLOR, TEST_COLOR];
+    } else {
+      const data = ctx.state.loop.timingHistory;
+      if (data.length === 0) {
+        empty("samples/sec");
+        return;
+      }
+      pts = data.map((p) => ({ x: p.x, ys: [p.sps] }));
+      colors = [TIMING_COLOR];
     }
 
-    let maxLoss = 0;
-    for (const p of data) maxLoss = Math.max(maxLoss, p.trainLoss, p.testLoss ?? 0);
-    const top = maxLoss > 0 ? maxLoss * 1.05 : 1;
-    const minX = data[0].x;
-    const spanX = Math.max(1, data[data.length - 1].x - minX);
+    let maxY = 0;
+    for (const p of pts) for (const v of p.ys) maxY = Math.max(maxY, v ?? 0);
+    const top = maxY > 0 ? maxY * 1.05 : 1;
+    const minX = pts[0].x;
+    const spanX = Math.max(1, pts[pts.length - 1].x - minX);
     const xOf = (x: number) => pad + ((x - minX) / spanX) * plotW;
     const yOf = (v: number) => pad + plotH - (v / top) * plotH;
 
-    const plotLine = (color: string, pick: (p: LossPoint) => number | null) => {
-      g.strokeStyle = color;
+    if (pts.length === 1) {
+      g.fillStyle = colors[0];
+      const v = pts[0].ys[0];
+      if (v !== null) g.fillRect(xOf(pts[0].x) - 1.5, yOf(v) - 1.5, 3, 3);
+      return;
+    }
+
+    for (let s = 0; s < colors.length; s++) {
+      g.strokeStyle = colors[s];
       g.lineWidth = 1.25;
       g.beginPath();
       let started = false;
-      for (const p of data) {
-        const v = pick(p);
-        if (v === null) continue;
+      for (const p of pts) {
+        const v = p.ys[s];
+        if (v === null || v === undefined) continue;
         if (!started) {
           g.moveTo(xOf(p.x), yOf(v));
           started = true;
@@ -78,14 +124,6 @@ export function mountHistoryPanel(host: HTMLElement, ctx: AppContext): PanelHand
         }
       }
       g.stroke();
-    };
-    // A single point won't draw a line; mark it.
-    if (data.length === 1) {
-      g.fillStyle = TRAIN_COLOR;
-      g.fillRect(xOf(data[0].x) - 1.5, yOf(data[0].trainLoss) - 1.5, 3, 3);
-    } else {
-      plotLine(TRAIN_COLOR, (p) => p.trainLoss);
-      plotLine(TEST_COLOR, (p) => p.testLoss);
     }
   }
 
