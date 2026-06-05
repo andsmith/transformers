@@ -150,28 +150,43 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
   sizeBox.append(trainSlider.el, testSlider.el, spaceHint, regenRow);
 
   // --- Test Set box (its own sub-box, fills the remaining panel height) ---
-  // Sort state (panel-local). null = index order.
-  type SortKey = "wrong" | "first";
-  let sortKey: SortKey | null = null;
+  // View state (panel-local).
+  type SortKey = "input" | "wrong" | "first";
+  let sortKey: SortKey | null = null; // null = index order
   let sortDir: 1 | -1 = -1; // -1 = descending
   let outMode: "y" | "yhat" = "y";
+  // The eval snapshot the list is currently rendered against. While "frozen"
+  // (after the user modifies the view) it stays pinned so training can
+  // continue without the rows shifting; the refresh button pulls the latest.
+  let viewEval: TestEval[] | null = null;
+  let viewEvalEpoch = -1;
+  let frozen = false;
+
+  /** Freeze on first user modification, snapshotting the latest eval. */
+  function freezeView(): void {
+    if (!frozen) {
+      frozen = true;
+      viewEval = ctx.state.loop.lastTestEval;
+      viewEvalEpoch = ctx.state.loop.lastTestEvalEpoch;
+    }
+  }
 
   const sortRow = document.createElement("div");
   sortRow.className = "sort-row";
+  const inputBtn = makeButton("input", () => cycleSort("input"));
   const wrongBtn = makeButton("# wrong", () => cycleSort("wrong"));
   const firstBtn = makeButton("1st error", () => cycleSort("first"));
-  wrongBtn.classList.add("sort-btn");
-  firstBtn.classList.add("sort-btn");
-  const evalHint = document.createElement("span");
-  evalHint.className = "hint eval-hint";
+  for (const b of [inputBtn, wrongBtn, firstBtn]) b.classList.add("sort-btn");
   const outBtn = makeButton("out: y", () => {
+    freezeView();
     outMode = outMode === "y" ? "yhat" : "y";
     update();
   });
   outBtn.classList.add("sort-btn", "out-btn");
-  sortRow.append(wrongBtn, firstBtn, evalHint, outBtn);
+  sortRow.append(inputBtn, wrongBtn, firstBtn, outBtn);
 
   function cycleSort(key: SortKey): void {
+    freezeView();
     if (sortKey !== key) {
       sortKey = key;
       sortDir = -1; // first activation: descending
@@ -183,6 +198,22 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
 
   const testBox = makeFieldset("Test Set");
   testBox.classList.add("sub-box", "test-set-box");
+
+  // Title row: dynamic title text + a refresh button (active when stale).
+  const testTitle = testBox.querySelector(".fieldset-title") as HTMLElement;
+  testTitle.textContent = "";
+  testTitle.classList.add("test-title-row");
+  const titleText = document.createElement("span");
+  const refreshBtn = makeButton("⟳", () => {
+    // Pull the latest eval into the (still-frozen) view.
+    viewEval = ctx.state.loop.lastTestEval;
+    viewEvalEpoch = ctx.state.loop.lastTestEvalEpoch;
+    update();
+  });
+  refreshBtn.classList.add("refresh-btn");
+  refreshBtn.title = "Refresh the test-set view to the latest evaluation";
+  testTitle.append(titleText, refreshBtn);
+
   const examplesEl = document.createElement("div");
   examplesEl.className = "examples";
   testBox.append(sortRow, examplesEl);
@@ -232,18 +263,27 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
     }
   }
 
-  /** Render the test set, marking last-epoch correctness when available. */
+  /** Lexical comparison of two token sequences. */
+  function lexCmp(a: number[], b: number[]): number {
+    const n = Math.min(a.length, b.length);
+    for (let i = 0; i < n; i++) if (a[i] !== b[i]) return a[i] - b[i];
+    return a.length - b.length;
+  }
+
+  /** Render the test set, marking the displayed eval's correctness. */
   function renderList(list: Example[]): void {
     const classification = isClassification(ctx.state.task);
     const frag = document.createDocumentFragment();
     const evalMap = new Map<number, TestEval>();
-    for (const e of ctx.state.loop.lastTestEval ?? []) evalMap.set(e.index, e);
+    for (const e of viewEval ?? []) evalMap.set(e.index, e);
     const haveEval = evalMap.size > 0;
     const showHat = outMode === "yhat" && haveEval;
 
-    // Order rows: by index unless an eval-based sort is active.
+    // Order rows. "input" needs no eval; "wrong"/"first" do.
     const sorted = [...list];
-    if (sortKey && haveEval) {
+    if (sortKey === "input") {
+      sorted.sort((a, b) => lexCmp(a.input, b.input) * sortDir);
+    } else if (sortKey && haveEval) {
       const keyOf = (ex: Example) => {
         const ev = evalMap.get(ex.index);
         if (!ev) return { primary: -1, conf: 0 };
@@ -364,21 +404,52 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
     randomCheck.set(s.randomSeed);
     renderVocab();
 
-    // Sort controls: enabled only once an epoch eval exists.
-    const haveEval = !!s.loop.lastTestEval;
+    // Dataset rebuilt (new test set) → reset the view to live/index order.
+    if (s.dataset !== lastDataset) {
+      frozen = false;
+      viewEval = null;
+      viewEvalEpoch = -1;
+    }
+    // Auto mode tracks the latest eval; frozen mode keeps the pinned snapshot.
+    if (!frozen) {
+      viewEval = s.loop.lastTestEval;
+      viewEvalEpoch = s.loop.lastTestEvalEpoch;
+    }
+
+    const haveEval = !!viewEval;
+    const liveHaveEval = !!s.loop.lastTestEval;
+    // input sort needs no eval; wrong/first/out do.
+    inputBtn.disabled = false;
     wrongBtn.disabled = !haveEval;
     firstBtn.disabled = !haveEval;
     outBtn.disabled = !haveEval;
     const arrow = (k: typeof sortKey) =>
       sortKey === k ? (sortDir === -1 ? " ▼" : " ▲") : "";
+    inputBtn.textContent = `input${arrow("input")}`;
+    inputBtn.classList.toggle("active", sortKey === "input");
     wrongBtn.textContent = `# wrong${arrow("wrong")}`;
     wrongBtn.classList.toggle("active", sortKey === "wrong");
     firstBtn.textContent = `1st error${arrow("first")}`;
     firstBtn.classList.toggle("active", sortKey === "first");
     outBtn.textContent = outMode === "yhat" ? "out: ŷ" : "out: y";
-    evalHint.textContent = haveEval ? `eval @ epoch ${s.loop.lastTestEvalEpoch}` : "no eval yet";
 
-    const listKey = `${s.display}|${sortKey ?? ""}|${sortDir}|${outMode}|${s.loop.lastTestEvalEpoch}`;
+    // Title: TEST SET (N% correct) - eval @ epoch E  /  - no eval yet
+    let titleStr = "Test Set";
+    if (haveEval && viewEval) {
+      const correct = viewEval.filter((e) => e.wrong === 0).length;
+      const pctCorrect = Math.round((correct / viewEval.length) * 100);
+      titleStr += ` (${pctCorrect}% correct) - eval @ epoch ${viewEvalEpoch}`;
+    } else {
+      titleStr += " - no eval yet";
+    }
+    titleText.textContent = titleStr;
+
+    // Refresh button active only when a newer eval exists than what's shown.
+    const stale = liveHaveEval && s.loop.lastTestEvalEpoch > viewEvalEpoch;
+    refreshBtn.disabled = !stale;
+    refreshBtn.classList.toggle("stale", stale);
+
+    const listKey = `${s.display}|${sortKey ?? ""}|${sortDir}|${outMode}|${viewEvalEpoch}`;
     if (s.dataset !== lastDataset || listKey !== lastListKey) {
       renderList(s.dataset.test);
       lastDataset = s.dataset;
