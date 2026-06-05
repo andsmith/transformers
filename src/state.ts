@@ -43,6 +43,7 @@ export interface AppState {
 
   // --- loss panel ---
   lossView: LossView;
+  lossLogScale: boolean; // log-scale y-axis
 
   // --- which split is shown in the dataset list ---
   datasetView: DatasetView;
@@ -164,6 +165,7 @@ export function createInitialState(): AppState {
     display: "chars",
     seed,
     lossView: "iteration",
+    lossLogScale: false,
     datasetView: "train",
     weightsCmap: "viridis",
     actsCmap: "bwr",
