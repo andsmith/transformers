@@ -431,7 +431,7 @@ export function mountLossPanel(host: HTMLElement, ctx: AppContext): PanelHandle 
         const sx = xOf(bx);
         const sy = yOf(best.testLoss);
         if (sx >= pad.l && sx <= pad.l + plotW && sy >= pad.t - 2 && sy <= pad.t + plotH + 2) {
-          drawStar(g, sx, sy, 6, color);
+          drawStar(g, sx, sy, 12, color);
         }
       }
     }

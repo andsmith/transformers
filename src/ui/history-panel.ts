@@ -214,7 +214,7 @@ export function mountHistoryPanel(host: HTMLElement, ctx: AppContext): PanelHand
         const lastX = eh[eh.length - 1].x;
         const frac = lastX > firstX ? (best.x - firstX) / (lastX - firstX) : 1;
         const color = frac < 1 / 3 ? "#e0413a" : frac < 2 / 3 ? "#f5c518" : "#2fbf71";
-        drawStar(g, xOf(best.x), yOf(best.v), 5, color);
+        drawStar(g, xOf(best.x), yOf(best.v), 10, color);
       }
     }
 
