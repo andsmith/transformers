@@ -129,6 +129,13 @@ window.addEventListener("DOMContentLoaded", () => {
     state.loop = loop;
   }
 
+  /** One Step click's worth of computation, at the chosen granularity. */
+  function doOneStep(): void {
+    if (state.stepGranularity === "layer") state.loop.stepLayer();
+    else if (state.stepGranularity === "iteration") state.loop.stepIteration();
+    else state.loop.stepEpoch();
+  }
+
   // Remembered loss-row height so expanding restores the user's chosen size.
   let savedRowBottom = "210px";
 
@@ -137,14 +144,6 @@ window.addEventListener("DOMContentLoaded", () => {
     apply(patch) {
       Object.assign(state, patch);
       if ("learningRate" in patch) state.optim.setLearningRate(state.learningRate);
-      // Leaving a continuous granularity stops the run.
-      if (
-        "stepGranularity" in patch &&
-        patch.stepGranularity !== "run" &&
-        patch.stepGranularity !== "epochs"
-      ) {
-        state.running = false;
-      }
       if ("uiFontPx" in patch) {
         root.style.setProperty("--ui-font-px", `${state.uiFontPx}px`);
       }
@@ -182,15 +181,9 @@ window.addEventListener("DOMContentLoaded", () => {
       refreshAll();
     },
     step() {
-      if (state.stepGranularity === "run" || state.stepGranularity === "epochs") {
-        state.running = !state.running;
-        run.update();
-        return;
-      }
+      // A manual Step pauses Tick mode and advances one step of the chosen size.
       state.running = false;
-      if (state.stepGranularity === "layer") state.loop.stepLayer();
-      else if (state.stepGranularity === "iteration") state.loop.stepIteration();
-      else if (state.stepGranularity === "epoch") state.loop.stepEpoch();
+      doOneStep();
       refreshAll();
     },
     reset() {
@@ -221,40 +214,60 @@ window.addEventListener("DOMContentLoaded", () => {
   status = mountStatusPanel(statusHost, ctx);
   history = mountHistoryPanel(historyHost, ctx);
 
-  // --- animation loop ---
+  // --- animation loop / Tick mode ---
+  // While running, Go simulates clicking Step at the Speed slider's rate;
+  // at the slider's max position each granularity uses its unthrottled path.
   let lastDrawnEpoch = -1;
+  let tickAccum = 0;
+  let lastFrameT = performance.now();
+
   const tick = () => {
-    if (state.running && state.stepGranularity === "run") {
-      const t0 = performance.now();
-      let steps = 0;
-      while (
-        performance.now() - t0 < RUN_FRAME_BUDGET_MS &&
-        steps < RUN_MAX_STEPS_PER_FRAME
-      ) {
-        state.loop.stepIteration();
-        steps++;
-      }
-      run.update(); // refresh counters/button
-      loss.update();
-      network.update();
-      status.update();
-      history.update();
-    } else if (state.running && state.stepGranularity === "epochs") {
-      // Fastest mode: bigger budget, no per-sample snapshots (except each
-      // epoch's last sample), and the UI redraws only at epoch boundaries.
-      const t0 = performance.now();
-      while (performance.now() - t0 < EPOCHS_FRAME_BUDGET_MS) {
-        state.loop.stepIteration(false);
-      }
-      if (state.loop.epoch !== lastDrawnEpoch) {
-        lastDrawnEpoch = state.loop.epoch;
-        run.update();
-        loss.update();
-        network.update();
-        status.update();
-        history.update();
+    const now = performance.now();
+    const dt = now - lastFrameT;
+    lastFrameT = now;
+
+    let redraw = true;
+    if (state.running) {
+      if (state.speed >= 100) {
+        // Unthrottled "max" per granularity.
+        if (state.stepGranularity === "layer") {
+          state.loop.stepLayer(); // one pipeline stage per frame
+        } else if (state.stepGranularity === "iteration") {
+          const t0 = performance.now();
+          let steps = 0;
+          while (
+            performance.now() - t0 < RUN_FRAME_BUDGET_MS &&
+            steps < RUN_MAX_STEPS_PER_FRAME
+          ) {
+            state.loop.stepIteration();
+            steps++;
+          }
+        } else {
+          // Fast epochs: no per-sample snapshots; redraw only per epoch.
+          const t0 = performance.now();
+          while (performance.now() - t0 < EPOCHS_FRAME_BUDGET_MS) {
+            state.loop.stepIteration(false);
+          }
+          redraw = state.loop.epoch !== lastDrawnEpoch;
+          if (redraw) lastDrawnEpoch = state.loop.epoch;
+        }
+        if (redraw) run.update();
+      } else {
+        // Timed ticks: 0 -> 0.5 Hz ... 99 -> 5 Hz (log scale).
+        const hz = 0.5 * Math.pow(10, state.speed / 99);
+        const interval = 1000 / hz;
+        tickAccum += dt;
+        if (tickAccum >= interval) {
+          tickAccum = Math.min(tickAccum - interval, interval); // no catch-up bursts
+          doOneStep();
+          run.update();
+        }
       }
     } else {
+      tickAccum = 0;
+    }
+
+    if (redraw) {
       loss.update();
       network.update();
       status.update();

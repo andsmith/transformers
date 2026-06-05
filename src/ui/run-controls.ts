@@ -13,8 +13,10 @@ import {
   makeButton,
   makeCheckbox,
   makeDropdown,
+  makeSlider,
   type Checkbox,
   type Dropdown,
+  type Slider,
 } from "./controls";
 import type { PanelHandle } from "./top-panel";
 
@@ -26,26 +28,38 @@ export function mountRunControls(host: HTMLElement, ctx: AppContext): PanelHandl
   const left = document.createElement("div");
   left.className = "run-left";
 
-  // Title row: big dark "Run" with the Step/Go button beside it (above the
-  // dropdown, saving horizontal space).
+  // Title row: big dark "Run", Step (one click = one step), Go/Stop (Tick
+  // mode = simulated Step clicks at the Speed rate), and the Speed slider.
   const stepBtn = makeButton("Step", () => ctx.step());
-  const resetBtn = makeButton("Reset", () => ctx.reset());
-  resetBtn.classList.add("btn-secondary", "btn-compact");
-  resetBtn.title = "Re-initialize model weights and clear training history";
+  stepBtn.classList.add("btn-compact");
+  const goBtn = makeButton("Go", () => ctx.apply({ running: !ctx.state.running }));
+  goBtn.classList.add("btn-compact");
+  const speedSlider: Slider = makeSlider({
+    label: "Speed",
+    min: 0,
+    max: 100,
+    step: 1,
+    inline: true,
+    value: ctx.state.speed,
+    format: (v) => (v >= 100 ? "max" : `${(0.5 * Math.pow(10, v / 99)).toFixed(1)} Hz`),
+    onInput: (v) => ctx.apply({ speed: v }),
+  });
+  speedSlider.el.classList.add("speed-slider");
+  speedSlider.el.title =
+    "Tick rate while running: 0.5–5 Hz, or unthrottled at the right end";
+
   const title = document.createElement("div");
   title.className = "run-title";
   title.textContent = "Run";
   const titleRow = document.createElement("div");
   titleRow.className = "run-title-row";
-  titleRow.append(title, stepBtn, resetBtn);
+  titleRow.append(title, stepBtn, goBtn, speedSlider.el);
 
   const granDropdown: Dropdown<StepGranularity> = makeDropdown(
     [
-      { value: "layer", label: "1 layer" },
-      { value: "iteration", label: "1 iteration" },
-      { value: "epoch", label: "1 epoch" },
-      { value: "run", label: "Run continuously" },
-      { value: "epochs", label: "Run by epochs (fast)" },
+      { value: "layer", label: "step 1 layer" },
+      { value: "iteration", label: "step 1 iteration" },
+      { value: "epoch", label: "step 1 epoch" },
     ],
     ctx.state.stepGranularity,
     (g) => ctx.apply({ stepGranularity: g }),
@@ -72,7 +86,7 @@ export function mountRunControls(host: HTMLElement, ctx: AppContext): PanelHandl
 
   const slTitle = document.createElement("div");
   slTitle.className = "fieldset-title";
-  slTitle.textContent = "Save / Load";
+  slTitle.textContent = "Model State";
 
   let saveWeights = false;
   let saveHistory = false;
@@ -102,7 +116,11 @@ export function mountRunControls(host: HTMLElement, ctx: AppContext): PanelHandl
   const slError = document.createElement("div");
   slError.className = "hint sl-error";
 
-  right.append(slTitle, slRow, weightsCheck.el, histCheck.el, slError);
+  const resetBtn = makeButton("Reset", () => ctx.reset());
+  resetBtn.classList.add("btn-secondary", "btn-compact");
+  resetBtn.title = "Re-initialize model weights and clear training history";
+
+  right.append(slTitle, slRow, weightsCheck.el, histCheck.el, slError, resetBtn);
 
   // Hidden native file picker for Load.
   const fileInput = document.createElement("input");
@@ -169,8 +187,8 @@ export function mountRunControls(host: HTMLElement, ctx: AppContext): PanelHandl
   function update(): void {
     const s = ctx.state;
     granDropdown.set(s.stepGranularity);
-    const continuous = s.stepGranularity === "run" || s.stepGranularity === "epochs";
-    stepBtn.textContent = continuous ? (s.running ? "Stop" : "Go") : "Step";
+    goBtn.textContent = s.running ? "Stop" : "Go";
+    speedSlider.set(s.speed);
     counters.textContent = `iter ${s.loop.iteration} · epoch ${s.loop.epoch}`;
     constSizeCheck.set(s.vizConstantSize);
   }

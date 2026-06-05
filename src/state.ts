@@ -27,6 +27,8 @@ export interface AppState {
   learningRate: number;
   stepGranularity: StepGranularity;
   running: boolean;
+  /** Tick-rate slider (0..100): 0 = 0.5 Hz, 99 = 5 Hz, 100 = unthrottled max. */
+  speed: number;
 
   // --- dataset controls ---
   display: DisplayMode;
@@ -207,6 +209,7 @@ export function createInitialState(): AppState {
     numHeads: 1,
     stepGranularity: "layer",
     running: false,
+    speed: 100,
     display: "chars",
     seed,
     randomSeed: true,

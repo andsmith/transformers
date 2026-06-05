@@ -15,8 +15,8 @@ import { Rng } from "../util/rng";
 import { isClassification } from "../tasks/types";
 import type { Dataset, Example } from "../tasks/types";
 
-/** "epochs" = continuous training that only refreshes the UI per epoch. */
-export type StepGranularity = "layer" | "iteration" | "epoch" | "run" | "epochs";
+/** What one Step click advances; continuity comes from Tick mode (Go + Speed). */
+export type StepGranularity = "layer" | "iteration" | "epoch";
 /** "complete" = a whole-sample step (iteration/epoch/run) finished training
  *  this sample; the viz shows the full pipeline, no active stage. */
 export type PassPhase = "forward" | "backward" | "complete";

@@ -68,7 +68,17 @@ body {
 .run-title-row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
+  flex-wrap: wrap; /* the Speed slider wraps below when cramped */
+}
+
+.run-title-row .speed-slider {
+  flex: 1;
+  min-width: 110px;
+}
+
+.run-title-row .speed-slider .slider-value {
+  min-width: 40px;
 }
 
 .run-title {
