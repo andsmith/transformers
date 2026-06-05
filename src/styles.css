@@ -30,20 +30,37 @@ body {
 /* ---- page grid ---- */
 .grid {
   /* Track sizes are CSS vars so the splitters can resize them on drag. */
-  --col-left: 340px; /* dataset column width (full-height, left side) */
-  --row-top: auto; /* top panel height */
+  --col-left: 340px; /* left (Run + dataset) column width */
+  --row-top: auto; /* top controls height (right side only) */
   --row-bottom: 210px; /* loss panel height */
   --gutter: 10px; /* draggable separator thickness */
   display: grid;
   grid-template-columns: var(--col-left) var(--gutter) 1fr;
   grid-template-rows: var(--row-top) var(--gutter) 1fr var(--gutter) var(--row-bottom);
   grid-template-areas:
-    "top       top       top"
-    "hsplit-t  hsplit-t  hsplit-t"
-    "dataset   vsplit    center"
-    "dataset   vsplit    hsplit-b"
-    "dataset   vsplit    loss";
+    "left  vsplit  top"
+    "left  vsplit  hsplit-t"
+    "left  vsplit  center"
+    "left  vsplit  hsplit-b"
+    "left  vsplit  loss";
   padding: 10px;
+}
+
+/* Left column: Run panel on top, dataset filling the rest. */
+.left-col {
+  grid-area: left;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  min-width: 0;
+}
+
+.run-panel {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 /* ---- splitters (draggable separators) ---- */
@@ -107,6 +124,47 @@ body.resizing {
 .top-panel {
   grid-area: top;
   overflow: auto; /* scroll rather than clip if dragged shorter than content */
+}
+
+.title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.title-row .app-title {
+  margin: 0;
+}
+
+.top-panel.collapsed {
+  padding: 5px 12px;
+}
+
+.top-panel.collapsed .title-row {
+  margin-bottom: 0;
+}
+
+.top-panel.collapsed .app-title {
+  font-size: 14px;
+}
+
+/* Small collapse/restore toggle shared by the top and loss panels. */
+.collapse-btn {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--muted);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.collapse-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .app-title {
@@ -301,7 +359,8 @@ body.resizing {
 
 /* ---- dataset panel ---- */
 .dataset-panel {
-  grid-area: dataset;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -459,22 +518,6 @@ body.resizing {
   font-weight: 400;
 }
 
-/* Run controls overlaid on the top-right of the network view. */
-.run-overlay {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  z-index: 10;
-  background: var(--panel-bg);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  padding: 8px 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
 .run-row {
   display: flex;
   gap: 6px;
@@ -487,6 +530,47 @@ body.resizing {
   display: flex;
   flex-direction: column;
   overflow: hidden; /* keep the plot inside the frame */
+  position: relative; /* anchors the hover hint */
+}
+
+.loss-panel.collapsed {
+  padding: 6px 12px;
+}
+
+.loss-panel.collapsed .panel-header-row {
+  margin-bottom: 0;
+}
+
+.loss-panel.collapsed .collapse-btn {
+  margin-left: auto;
+}
+
+.reset-zoom-btn {
+  padding: 3px 9px;
+  font-size: 11px;
+  margin-left: 8px;
+}
+
+/* Hover hint popup over the loss plot. */
+.plot-hint {
+  position: absolute;
+  top: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(31, 42, 54, 0.92);
+  color: #fff;
+  font-size: 11px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+  z-index: 6;
+  white-space: nowrap;
+}
+
+.plot-hint.visible {
+  opacity: 1;
 }
 
 .loss-canvas {

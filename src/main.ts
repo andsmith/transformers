@@ -46,11 +46,17 @@ window.addEventListener("DOMContentLoaded", () => {
 
   // --- grid scaffold ---
   root.classList.add("grid");
+  // Left column: Run panel stacked above the dataset panel.
+  const leftHost = document.createElement("div");
+  leftHost.className = "left-col";
+  const runHost = document.createElement("div");
+  const datasetHost = document.createElement("div");
+  leftHost.append(runHost, datasetHost);
+
   const topHost = section("top");
   const centerHost = section("center");
-  const datasetHost = section("dataset");
   const lossHost = section("loss");
-  root.append(topHost, centerHost, datasetHost, lossHost);
+  root.append(leftHost, topHost, centerHost, lossHost);
   mountSplitters(root);
 
   function section(area: string): HTMLElement {
@@ -84,6 +90,9 @@ window.addEventListener("DOMContentLoaded", () => {
     state.loop = built.loop;
   }
 
+  // Remembered loss-row height so expanding restores the user's chosen size.
+  let savedRowBottom = "210px";
+
   const ctx: AppContext = {
     state,
     apply(patch) {
@@ -92,6 +101,20 @@ window.addEventListener("DOMContentLoaded", () => {
       // Leaving "run" granularity stops a continuous run.
       if ("stepGranularity" in patch && patch.stepGranularity !== "run") {
         state.running = false;
+      }
+      // Collapsing panels resizes their grid rows (main owns the grid).
+      if ("topCollapsed" in patch) {
+        // auto-size: collapsed -> slim title bar; expanded -> content height.
+        root.style.setProperty("--row-top", "auto");
+      }
+      if ("lossCollapsed" in patch) {
+        if (patch.lossCollapsed) {
+          const cur = root.style.getPropertyValue("--row-bottom").trim();
+          if (cur && cur !== "34px") savedRowBottom = cur;
+          root.style.setProperty("--row-bottom", "34px");
+        } else {
+          root.style.setProperty("--row-bottom", savedRowBottom);
+        }
       }
       const needsRebuild = Object.keys(patch).some((k) =>
         REBUILD_KEYS.has(k as keyof AppState),
@@ -126,7 +149,7 @@ window.addEventListener("DOMContentLoaded", () => {
   dataset = mountDatasetPanel(datasetHost, ctx);
   loss = mountLossPanel(lossHost, ctx);
   network = mountNetworkView(centerHost, ctx);
-  run = mountRunControls(centerHost, ctx); // overlay on the network view
+  run = mountRunControls(runHost, ctx); // top of the left column
 
   // --- animation loop ---
   const tick = () => {

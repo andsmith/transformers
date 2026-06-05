@@ -1,17 +1,23 @@
 /**
- * The "Run" control frame, overlaid on the top-right corner of the network
- * visualization: the step-granularity dropdown, the Step/Go button, and the
- * iteration/epoch counters.
+ * The "Run" panel at the top of the left column: the step-granularity dropdown,
+ * the Step/Go button, the iteration/epoch counters, and misc view options that
+ * affect stepping (constant-size visualization).
  */
 
 import type { AppContext } from "../state";
 import type { StepGranularity } from "../training/loop";
-import { makeButton, makeDropdown, type Dropdown } from "./controls";
+import {
+  makeButton,
+  makeCheckbox,
+  makeDropdown,
+  type Checkbox,
+  type Dropdown,
+} from "./controls";
 import type { PanelHandle } from "./top-panel";
 
 export function mountRunControls(host: HTMLElement, ctx: AppContext): PanelHandle {
-  const overlay = document.createElement("div");
-  overlay.className = "run-overlay";
+  host.classList.add("panel", "run-panel");
+  host.innerHTML = "";
 
   const title = document.createElement("div");
   title.className = "fieldset-title";
@@ -36,8 +42,16 @@ export function mountRunControls(host: HTMLElement, ctx: AppContext): PanelHandl
   const counters = document.createElement("div");
   counters.className = "hint";
 
-  overlay.append(title, row, counters);
-  host.appendChild(overlay);
+  const constSizeCheck: Checkbox = makeCheckbox(
+    "Constant-size viz elements",
+    ctx.state.vizConstantSize,
+    (c) => ctx.apply({ vizConstantSize: c }),
+  );
+  constSizeCheck.el.title =
+    "Size visualization elements for the maximum sequence length so the " +
+    "layout doesn't shift between samples (cell aspect ratio stretches).";
+
+  host.append(title, row, counters, constSizeCheck.el);
 
   function update(): void {
     const s = ctx.state;
@@ -45,6 +59,7 @@ export function mountRunControls(host: HTMLElement, ctx: AppContext): PanelHandl
     stepBtn.textContent =
       s.stepGranularity === "run" ? (s.running ? "Stop" : "Go") : "Step";
     counters.textContent = `iter ${s.loop.iteration} · epoch ${s.loop.epoch}`;
+    constSizeCheck.set(s.vizConstantSize);
   }
 
   update();

@@ -11,13 +11,11 @@ import { ALL_TASKS, TASK_SPECS } from "../tasks/types";
 import type { PEScheme } from "../model/embeddings";
 import { ACT_CMAPS, WEIGHT_CMAPS } from "../viz/colormaps";
 import {
-  makeCheckbox,
   makeDropdown,
   makeFieldset,
   makeRadioCards,
   makeRadioGroup,
   makeSlider,
-  type Checkbox,
   type Dropdown,
   type RadioGroup,
   type Slider,
@@ -31,11 +29,19 @@ export function mountTopPanel(host: HTMLElement, ctx: AppContext): PanelHandle {
   host.classList.add("panel", "top-panel");
   host.innerHTML = "";
 
-  // --- title ---
+  // --- title row with collapse toggle ---
+  const titleRow = document.createElement("div");
+  titleRow.className = "title-row";
   const title = document.createElement("h1");
   title.className = "app-title";
   title.textContent = `Transformer Playground - Version ${VERSION}`;
-  host.appendChild(title);
+  const collapseBtn = document.createElement("button");
+  collapseBtn.className = "collapse-btn";
+  collapseBtn.addEventListener("click", () =>
+    ctx.apply({ topCollapsed: !ctx.state.topCollapsed }),
+  );
+  titleRow.append(title, collapseBtn);
+  host.appendChild(titleRow);
 
   const row = document.createElement("div");
   row.className = "control-row";
@@ -102,19 +108,6 @@ export function mountTopPanel(host: HTMLElement, ctx: AppContext): PanelHandle {
   modelBox.append(modelRow);
   row.appendChild(modelBox);
 
-  // --- misc ---
-  const miscBox = makeFieldset("Misc");
-  const constSizeCheck: Checkbox = makeCheckbox(
-    "Constant-size viz elements",
-    ctx.state.vizConstantSize,
-    (c) => ctx.apply({ vizConstantSize: c }),
-  );
-  constSizeCheck.el.title =
-    "Size visualization elements for the maximum sequence length so the " +
-    "layout doesn't shift between samples (cell aspect ratio stretches).";
-  miscBox.append(constSizeCheck.el);
-  row.appendChild(miscBox);
-
   // --- learning ---
   const learnBox = makeFieldset("Learning");
   const lrSlider: Slider = makeSlider({
@@ -151,6 +144,10 @@ export function mountTopPanel(host: HTMLElement, ctx: AppContext): PanelHandle {
 
   function update(): void {
     const s = ctx.state;
+    host.classList.toggle("collapsed", s.topCollapsed);
+    row.style.display = s.topCollapsed ? "none" : "";
+    collapseBtn.textContent = s.topCollapsed ? "▼ controls" : "▲ hide";
+    collapseBtn.title = s.topCollapsed ? "Restore the controls" : "Collapse the controls";
     taskRadios.set(s.task);
     embedSlider.set(s.embedDim);
     peRadios.set(s.peScheme);
@@ -158,7 +155,6 @@ export function mountTopPanel(host: HTMLElement, ctx: AppContext): PanelHandle {
     lrSlider.set(Math.log10(s.learningRate));
     weightsCmapDd.set(s.weightsCmap);
     actsCmapDd.set(s.actsCmap);
-    constSizeCheck.set(s.vizConstantSize);
   }
 
   update();

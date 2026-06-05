@@ -56,6 +56,10 @@ export interface AppState {
   /** Size viz elements for maxSeqLen so the layout doesn't shift when the
    *  sequence length varies (cells stretch; aspect ratio changes). */
   vizConstantSize: boolean;
+
+  // --- collapsible panels ---
+  topCollapsed: boolean; // top controls strip
+  lossCollapsed: boolean; // loss plot
 }
 
 /**
@@ -170,6 +174,8 @@ export function createInitialState(): AppState {
     weightsCmap: "viridis",
     actsCmap: "bwr",
     vizConstantSize: false,
+    topCollapsed: false,
+    lossCollapsed: false,
     ...built,
   };
 }
