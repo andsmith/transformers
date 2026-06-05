@@ -387,6 +387,22 @@ body.resizing {
   border-bottom: 1px solid var(--line);
 }
 
+/* A row split into two equal halves (slider | companion control). */
+.control-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  align-items: start;
+}
+
+.vocab-tokens {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  align-items: center;
+  min-height: 16px;
+}
+
 .examples {
   overflow-y: auto;
   flex: 1;

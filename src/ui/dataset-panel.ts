@@ -47,13 +47,28 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
   );
 
   const vocabSlider: Slider = makeSlider({
-    label: "Symbols (|V|)",
+    label: "Vocabulary size",
     min: 2,
     max: MAX_VOCAB,
     step: 1,
     value: ctx.state.numSymbols,
     onInput: (v) => ctx.apply({ numSymbols: v }),
   });
+
+  // Live preview of the vocabulary (chars or colored squares).
+  const vocabPreview = document.createElement("div");
+  vocabPreview.className = "labeled";
+  const vocabCap = document.createElement("div");
+  vocabCap.className = "caption";
+  vocabCap.textContent = "Vocabulary";
+  const vocabTokens = document.createElement("div");
+  vocabTokens.className = "vocab-tokens";
+  vocabPreview.append(vocabCap, vocabTokens);
+
+  const vocabRow = document.createElement("div");
+  vocabRow.className = "control-pair";
+  vocabRow.append(vocabSlider.el, vocabPreview);
+
   const maxLenSlider: Slider = makeSlider({
     label: "Max sequence length",
     min: 2,
@@ -63,10 +78,15 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
     onInput: (v) => ctx.apply({ maxSeqLen: v }),
   });
   const fixedLenCheck: Checkbox = makeCheckbox(
-    "All sequences max length",
+    "All max length",
     ctx.state.fixedLength,
     (c) => ctx.apply({ fixedLength: c }),
   );
+  fixedLenCheck.el.title = "Generate every sequence at exactly the maximum length";
+
+  const lenRow = document.createElement("div");
+  lenRow.className = "control-pair";
+  lenRow.append(maxLenSlider.el, fixedLenCheck.el);
   const countSlider: Slider = makeSlider({
     label: "Examples",
     min: 10,
@@ -105,9 +125,8 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
   controls.className = "dataset-controls";
   controls.append(
     displayRadios.el,
-    vocabSlider.el,
-    maxLenSlider.el,
-    fixedLenCheck.el,
+    vocabRow,
+    lenRow,
     countSlider.el,
     splitSlider.el,
     regenBtn,
@@ -140,6 +159,14 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
     row.className = "seq";
     for (const id of ids) row.appendChild(renderToken(id));
     return row;
+  }
+
+  /** Re-render the vocabulary preview (all token ids, current display mode). */
+  function renderVocab(): void {
+    vocabTokens.innerHTML = "";
+    for (let id = 0; id < ctx.state.numSymbols; id++) {
+      vocabTokens.appendChild(renderToken(id));
+    }
   }
 
   /** Render every sample in `list` as an indexed row (uses each sample's
@@ -215,6 +242,7 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
     countSlider.set(s.numExamples);
     splitSlider.set(Math.round(s.trainTestSplit * 100));
     viewDropdown.set(s.datasetView);
+    renderVocab();
 
     const listKey = `${s.datasetView}|${s.display}`;
     if (s.dataset !== lastDataset || listKey !== lastListKey) {
