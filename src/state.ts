@@ -50,6 +50,11 @@ export interface AppState {
   // --- network visualization colormaps (view-only) ---
   weightsCmap: string; // key into WEIGHT_CMAPS
   actsCmap: string; // key into ACT_CMAPS
+
+  // --- misc view options ---
+  /** Size viz elements for maxSeqLen so the layout doesn't shift when the
+   *  sequence length varies (cells stretch; aspect ratio changes). */
+  vizConstantSize: boolean;
 }
 
 /**
@@ -162,6 +167,7 @@ export function createInitialState(): AppState {
     datasetView: "train",
     weightsCmap: "viridis",
     actsCmap: "bwr",
+    vizConstantSize: false,
     ...built,
   };
 }

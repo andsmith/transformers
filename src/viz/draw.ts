@@ -49,36 +49,26 @@ export function matrixData(
   );
 }
 
-/** Footprint of a matrix drawn at the given cell size (incl. badge + title). */
-export function matrixSize(
-  rows: number,
-  cols: number,
-  cell: number,
-  withTitle: boolean,
-): DrawnSize {
-  return {
-    w: cols * cell,
-    h: rows * cell + BADGE_H + (withTitle ? TITLE_H : 0),
-  };
-}
-
 /**
- * Draw a heatmap at (x, y). The badge row is drawn above the cells, the title
- * (if any) below. Returns the total footprint.
+ * Draw a heatmap at (x, y) with independent cell width/height (non-square
+ * cells let activation matrices stretch into a constant footprint regardless
+ * of sequence length). The badge row is drawn above the cells, the title (if
+ * any) below. Returns the total footprint.
  */
 export function drawMatrix(
   g: CanvasRenderingContext2D,
   x: number,
   y: number,
-  cell: number,
+  cellW: number,
+  cellH: number,
   m: Value[][] | number[][],
   opts: MatrixOpts,
 ): DrawnSize {
   const data = matrixData(m, !!opts.grad);
   const rows = data.length;
   const cols = rows > 0 ? data[0].length : 0;
-  const w = cols * cell;
-  const h = rows * cell;
+  const w = cols * cellW;
+  const h = rows * cellH;
   const top = y + BADGE_H;
 
   // Normalization: sequential min..max for forward weights; symmetric about 0
@@ -92,7 +82,7 @@ export function drawMatrix(
       const v = data[r][c];
       const t = diverging ? normDiv(v, absMax) : normSeq(v, min, max);
       g.fillStyle = cmapColor(opts.cmap, t);
-      g.fillRect(x + c * cell, top + r * cell, cell, cell);
+      g.fillRect(x + c * cellW, top + r * cellH, cellW, cellH);
     }
   }
 
@@ -115,7 +105,7 @@ export function drawMatrix(
     g.lineWidth = 1;
     for (const r of opts.outlineRows) {
       if (r >= 0 && r < rows) {
-        g.strokeRect(x + 0.5, top + r * cell + 0.5, w - 1, cell - 1);
+        g.strokeRect(x + 0.5, top + r * cellH + 0.5, w - 1, cellH - 1);
       }
     }
   }

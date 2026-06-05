@@ -11,11 +11,13 @@ import { ALL_TASKS, TASK_SPECS } from "../tasks/types";
 import type { PEScheme } from "../model/embeddings";
 import { ACT_CMAPS, WEIGHT_CMAPS } from "../viz/colormaps";
 import {
+  makeCheckbox,
   makeDropdown,
   makeFieldset,
   makeRadioCards,
   makeRadioGroup,
   makeSlider,
+  type Checkbox,
   type Dropdown,
   type RadioGroup,
   type Slider,
@@ -100,6 +102,19 @@ export function mountTopPanel(host: HTMLElement, ctx: AppContext): PanelHandle {
   modelBox.append(modelRow);
   row.appendChild(modelBox);
 
+  // --- misc ---
+  const miscBox = makeFieldset("Misc");
+  const constSizeCheck: Checkbox = makeCheckbox(
+    "Constant-size viz elements",
+    ctx.state.vizConstantSize,
+    (c) => ctx.apply({ vizConstantSize: c }),
+  );
+  constSizeCheck.el.title =
+    "Size visualization elements for the maximum sequence length so the " +
+    "layout doesn't shift between samples (cell aspect ratio stretches).";
+  miscBox.append(constSizeCheck.el);
+  row.appendChild(miscBox);
+
   // --- learning ---
   const learnBox = makeFieldset("Learning");
   const lrSlider: Slider = makeSlider({
@@ -143,6 +158,7 @@ export function mountTopPanel(host: HTMLElement, ctx: AppContext): PanelHandle {
     lrSlider.set(Math.log10(s.learningRate));
     weightsCmapDd.set(s.weightsCmap);
     actsCmapDd.set(s.actsCmap);
+    constSizeCheck.set(s.vizConstantSize);
   }
 
   update();
