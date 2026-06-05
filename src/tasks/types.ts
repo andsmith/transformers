@@ -12,27 +12,33 @@ export interface TaskSpec {
 }
 
 /**
- * A single training example.
+ * A single example.
  * - Transduction tasks (copy/reverse/sort): `output` is an aligned token
  *   sequence the same length as `input`.
  * - Classification task (parens): `output` is a single-element array, `[0]`
  *   (unbalanced) or `[1]` (balanced).
  */
 export interface Example {
-  /** Stable global id (0..count-1, generation order). Survives the train/test
-   *  shuffle so a sample can be referenced from anywhere. */
+  /** Test samples: stable id 0..N-1. On-the-fly training samples: the
+   *  iteration count at which they were drawn (display only). */
   index: number;
   input: number[];
   output: number[];
 }
 
+/**
+ * The dataset is a FIXED, deduplicated test set plus the generation rules.
+ * Training samples are drawn on the fly (see datasets.generateTrainExample),
+ * rejected against `testKeys` so the test set stays truly held out.
+ */
 export interface Dataset {
   task: Task;
   vocabSize: number;
-  /** All generated examples (train + test, in generation order). */
-  examples: Example[];
-  train: Example[];
+  minLen: number;
+  maxLen: number;
   test: Example[];
+  /** sampleKey(input) of every test example, for rejection sampling. */
+  testKeys: Set<string>;
 }
 
 export const TASK_SPECS: Record<Task, TaskSpec> = {

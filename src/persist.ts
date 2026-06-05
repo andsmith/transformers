@@ -20,13 +20,16 @@ export interface ExperimentConfig {
   peScheme: PEScheme;
   numOutputLayers: 1 | 2;
   learningRate: number;
-  numExamples: number;
+  trainPerEpoch: number;
+  testSetSize: number;
   minSeqLen: number;
   maxSeqLen: number;
   fixedLength: boolean;
-  trainTestSplit: number;
   seed: number;
   randomSeed: boolean;
+  /** Legacy fields (pre-0.0.23 fixed-train-set saves), used for migration. */
+  numExamples?: number;
+  trainTestSplit?: number;
 }
 
 export interface SaveFile {
@@ -53,11 +56,11 @@ export function buildSave(state: AppState, opts: SaveOptions): SaveFile {
     peScheme: state.peScheme,
     numOutputLayers: state.numOutputLayers,
     learningRate: state.learningRate,
-    numExamples: state.numExamples,
+    trainPerEpoch: state.trainPerEpoch,
+    testSetSize: state.testSetSize,
     minSeqLen: state.minSeqLen,
     maxSeqLen: state.maxSeqLen,
     fixedLength: state.fixedLength,
-    trainTestSplit: state.trainTestSplit,
     seed: state.seed,
     randomSeed: state.randomSeed,
   };
@@ -95,6 +98,19 @@ export function applySave(
   }
   const e = file.experiment;
 
+  // Migrate pre-0.0.23 saves (fixed train set with a split) to the new
+  // trainPerEpoch / testSetSize fields.
+  let trainPerEpoch = e.trainPerEpoch;
+  let testSetSize = e.testSetSize;
+  if (trainPerEpoch === undefined && e.numExamples !== undefined) {
+    const split = e.trainTestSplit ?? 0.1;
+    testSetSize = Math.max(0, Math.round(e.numExamples * split));
+    trainPerEpoch = Math.min(8192, Math.max(10, e.numExamples - testSetSize));
+  }
+  if (trainPerEpoch === undefined || testSetSize === undefined) {
+    return "Save file is missing dataset-size fields.";
+  }
+
   // Copy the known experiment keys explicitly (ignore anything else).
   state.task = e.task;
   state.numSymbols = e.numSymbols;
@@ -102,11 +118,11 @@ export function applySave(
   state.peScheme = e.peScheme;
   state.numOutputLayers = e.numOutputLayers;
   state.learningRate = e.learningRate;
-  state.numExamples = e.numExamples;
+  state.trainPerEpoch = trainPerEpoch;
+  state.testSetSize = testSetSize;
   state.minSeqLen = e.minSeqLen;
   state.maxSeqLen = e.maxSeqLen;
   state.fixedLength = e.fixedLength;
-  state.trainTestSplit = e.trainTestSplit;
   state.seed = e.seed;
   state.randomSeed = e.randomSeed;
   state.running = false;

@@ -4,7 +4,7 @@
  * after `main.ts` mutates it (the whiteboard_web convention).
  */
 
-import { generateDataset, mulberry32 } from "./tasks/datasets";
+import { generateTestSet, mulberry32, sampleSpaceSize } from "./tasks/datasets";
 import type { Dataset, Task } from "./tasks/types";
 import type { PEScheme } from "./model/embeddings";
 import { TransformerModel } from "./model/transformer";
@@ -14,7 +14,11 @@ import { Rng } from "./util/rng";
 
 export type DisplayMode = "chars" | "squares";
 export type LossView = "iteration" | "epoch";
-export type DatasetView = "train" | "test";
+
+/** Absolute cap on the test-set-size slider. */
+export const TEST_SET_ABS_MAX = 500;
+/** Cap on how many training samples make up one epoch. */
+export const TRAIN_PER_EPOCH_MAX = 8192;
 
 export interface AppState {
   // --- task & model hyperparameters ---
@@ -32,11 +36,13 @@ export interface AppState {
 
   // --- dataset controls ---
   display: DisplayMode;
-  numExamples: number; // 10..5000
+  /** On-the-fly training samples per epoch (10..TRAIN_PER_EPOCH_MAX). */
+  trainPerEpoch: number;
+  /** Fixed held-out test set size (0..min(500, 20% of the sample space)). */
+  testSetSize: number;
   minSeqLen: number; // shortest generated sequence
   maxSeqLen: number; // longest generated sequence
   fixedLength: boolean; // if true, every sequence is exactly maxSeqLen
-  trainTestSplit: number; // 0..0.5 (fraction held out for test)
   seed: number;
   randomSeed: boolean; // Regenerate draws a fresh random seed each time
   dataset: Dataset;
@@ -50,9 +56,6 @@ export interface AppState {
   lossView: LossView;
   lossLogScale: boolean; // log-scale y-axis
   lossGridLines: boolean; // horizontal grid + epoch boundary lines
-
-  // --- which split is shown in the dataset list ---
-  datasetView: DatasetView;
 
   // --- network visualization colormaps (view-only) ---
   weightsCmap: string; // key into WEIGHT_CMAPS
@@ -98,11 +101,11 @@ export interface Defaults {
   peScheme: PEScheme;
   numOutputLayers: 1 | 2;
   learningRate: number;
-  numExamples: number;
+  trainPerEpoch: number;
+  testSetSize: number;
   minSeqLen: number;
   maxSeqLen: number;
   fixedLength: boolean;
-  trainTestSplit: number;
 }
 
 const DEFAULTS: Defaults = {
@@ -112,31 +115,43 @@ const DEFAULTS: Defaults = {
   peScheme: "sinusoidal",
   numOutputLayers: 1,
   learningRate: 0.05,
-  numExamples: 100,
+  trainPerEpoch: 100,
+  testSetSize: 50,
   minSeqLen: 3,
   maxSeqLen: 7,
   fixedLength: false,
-  trainTestSplit: 0.1,
 };
 
-/** Generate just the dataset from the current settings (no model rebuild). */
-export function rebuildDataset(state: {
+export interface GenStateSlice {
   task: Task;
   numSymbols: number;
-  numExamples: number;
+  testSetSize: number;
   minSeqLen: number;
   maxSeqLen: number;
   fixedLength: boolean;
-  trainTestSplit: number;
   seed: number;
-}): Dataset {
+}
+
+/** Largest allowed test set under the current generation rules:
+ *  min(500, 20% of the theoretical sample space). */
+export function testSetMax(s: {
+  numSymbols: number;
+  minSeqLen: number;
+  maxSeqLen: number;
+  fixedLength: boolean;
+}): number {
+  const space = sampleSpaceSize(s.numSymbols, s.minSeqLen, s.maxSeqLen, s.fixedLength);
+  return Math.min(TEST_SET_ABS_MAX, Math.floor(0.2 * space));
+}
+
+/** Generate just the (test) dataset from the current settings. */
+export function rebuildDataset(state: GenStateSlice): Dataset {
   const maxLen = state.maxSeqLen;
   const minLen = state.fixedLength ? maxLen : Math.min(state.minSeqLen, maxLen);
-  return generateDataset({
+  return generateTestSet({
     task: state.task,
     vocabSize: state.numSymbols,
-    count: state.numExamples,
-    testFraction: state.trainTestSplit,
+    count: Math.min(state.testSetSize, testSetMax(state)),
     seed: state.seed,
     minLen,
     maxLen,
@@ -159,19 +174,12 @@ export function modelSummary(s: {
 }
 
 /** (Re)build dataset, model, optimizer and training loop from the given state. */
-export function rebuild(state: {
-  task: Task;
-  numSymbols: number;
+export function rebuild(state: GenStateSlice & {
   embedDim: number;
   peScheme: PEScheme;
   numOutputLayers: 1 | 2;
   learningRate: number;
-  numExamples: number;
-  minSeqLen: number;
-  maxSeqLen: number;
-  fixedLength: boolean;
-  trainTestSplit: number;
-  seed: number;
+  trainPerEpoch: number;
 }): {
   dataset: Dataset;
   model: TransformerModel;
@@ -195,8 +203,14 @@ export function rebuild(state: {
     rng,
   );
   const optim = new SGD(model.store, { learningRate: state.learningRate });
-  // Separate (serializable) RNG stream for the per-epoch sample-order shuffle.
-  const loop = new TrainingLoop(model, optim, dataset, new Rng(state.seed ^ 0x51ed270b));
+  // Separate (serializable) RNG stream for on-the-fly training-sample draws.
+  const loop = new TrainingLoop(
+    model,
+    optim,
+    dataset,
+    new Rng(state.seed ^ 0x51ed270b),
+    state.trainPerEpoch,
+  );
 
   return { dataset, model, optim, loop };
 }
@@ -216,7 +230,6 @@ export function createInitialState(): AppState {
     lossView: "iteration",
     lossLogScale: false,
     lossGridLines: true,
-    datasetView: "train",
     weightsCmap: "viridis",
     actsCmap: "bwr",
     vizConstantSize: false,

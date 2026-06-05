@@ -9,6 +9,7 @@ import {
   createInitialState,
   rebuild,
   rebuildDataset,
+  testSetMax,
   type AppContext,
   type AppState,
 } from "./state";
@@ -37,9 +38,9 @@ const REBUILD_KEYS = new Set<keyof AppState>([
   "fixedLength",
 ]);
 
-/** Dataset-SIZE keys: regenerate/resplit the data but keep the model and its
- *  training history — nothing about the architecture depends on them. */
-const DATA_ONLY_KEYS = new Set<keyof AppState>(["numExamples", "trainTestSplit"]);
+/** Dataset-SIZE keys: regenerate the test set / change the epoch length but
+ *  keep the model and its training history. */
+const DATA_ONLY_KEYS = new Set<keyof AppState>(["trainPerEpoch", "testSetSize"]);
 
 /** Per-frame time budget (ms) for continuous "run" mode — scalar-autograd
  *  iterations vary a lot in cost with seqLen/embedDim, so budget time rather
@@ -115,8 +116,8 @@ window.addEventListener("DOMContentLoaded", () => {
     state.loop = built.loop;
   }
 
-  /** Regenerate just the data; the model keeps its weights and the loss
-   *  curves keep growing (used for dataset-size changes and Regenerate). */
+  /** Regenerate just the test set / epoch length; the model keeps its weights
+   *  and the loss curves keep growing (dataset-size changes and Regenerate). */
   function doRebuildDataOnly(): void {
     state.dataset = rebuildDataset(state);
     const loop = new TrainingLoop(
@@ -124,6 +125,7 @@ window.addEventListener("DOMContentLoaded", () => {
       state.optim,
       state.dataset,
       new Rng(state.seed ^ 0x51ed270b),
+      state.trainPerEpoch,
     );
     loop.carryOver(state.loop);
     state.loop = loop;
@@ -163,7 +165,9 @@ window.addEventListener("DOMContentLoaded", () => {
       }
       const keys = Object.keys(patch);
       if (keys.some((k) => REBUILD_KEYS.has(k as keyof AppState))) {
-        // Generation/model change: full reset.
+        // Generation/model change: full reset. Shrinking the sample space may
+        // also force the test set smaller (20% cap).
+        state.testSetSize = Math.min(state.testSetSize, testSetMax(state));
         state.running = false;
         doRebuild();
       } else if (keys.some((k) => DATA_ONLY_KEYS.has(k as keyof AppState))) {

@@ -1,10 +1,13 @@
 /**
- * Dataset generators for the four toy tasks. All generation is driven by a
- * seeded RNG so that "Regenerate" with the same seed reproduces the same data.
+ * Sample generators for the four toy tasks.
+ *
+ * The TEST set is generated once from a seed (deduplicated, fixed). TRAINING
+ * samples are drawn on the fly from the same distribution, rejected when they
+ * collide with the test set — the test set is truly held out, and training
+ * asymptotically covers the rest of the sample space.
  */
 
 import type { Dataset, Example, Task } from "./types";
-import { isClassification } from "./types";
 import { isBalanced, parensRoles, type ParensRoles } from "./grammar";
 
 /** Default sequence-length range for generated strings (short strings). */
@@ -12,16 +15,40 @@ export const MIN_LEN = 3;
 export const MAX_LEN = 7;
 /** Hard upper bound for the max-sequence-length slider. */
 export const MAX_SEQ_LEN_LIMIT = 12;
+/** Anything above this counts as "effectively infinite" sample space. */
+export const SPACE_HUGE = 1e15;
 
-export interface GenOptions {
+/** Generation rules (everything needed to draw one sample). */
+export interface GenConfig {
   task: Task;
   vocabSize: number;
-  count: number;
-  /** Fraction (0..0.5) of examples reserved for the test split. */
-  testFraction: number;
-  seed: number;
-  minLen?: number;
-  maxLen?: number;
+  minLen: number;
+  maxLen: number;
+}
+
+/** Identity key for rejection sampling (input determines output). */
+export function sampleKey(input: number[]): string {
+  return input.join(",");
+}
+
+/**
+ * Theoretical number of distinct samples under the generation rules:
+ * Σ V^L over L in [minLen, maxLen] (just V^maxLen when fixed-length).
+ * Capped at SPACE_HUGE — beyond that the exact value is irrelevant.
+ */
+export function sampleSpaceSize(
+  vocabSize: number,
+  minLen: number,
+  maxLen: number,
+  fixedLength: boolean,
+): number {
+  let total = 0;
+  const lo = fixedLength ? maxLen : Math.min(minLen, maxLen);
+  for (let L = lo; L <= maxLen; L++) {
+    total += Math.pow(vocabSize, L);
+    if (total >= SPACE_HUGE) return SPACE_HUGE;
+  }
+  return total;
 }
 
 /** mulberry32: tiny, fast, deterministic PRNG seeded from a 32-bit int. */
@@ -129,39 +156,57 @@ function generateOne(
   }
 }
 
-function shuffle<T>(rng: () => number, arr: T[]): T[] {
-  const a = arr.slice();
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = randInt(rng, 0, i);
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
+export interface TestSetOptions extends GenConfig {
+  count: number;
+  seed: number;
 }
 
-/** Generate a full dataset (examples + train/test split) for a task. */
-export function generateDataset(opts: GenOptions): Dataset {
-  const { task, vocabSize, count, testFraction, seed } = opts;
-  const minLen = opts.minLen ?? MIN_LEN;
-  const maxLen = opts.maxLen ?? MAX_LEN;
+/**
+ * Generate the fixed test set: `count` DISTINCT samples (deduplicated by
+ * input key, bounded attempts so tiny sample spaces can't hang), seeded so
+ * the same seed reproduces the same test set. Indices are 0..N-1.
+ */
+export function generateTestSet(opts: TestSetOptions): Dataset {
+  const { task, vocabSize, count, seed } = opts;
+  const minLen = Math.min(opts.minLen, opts.maxLen);
+  const maxLen = opts.maxLen;
   const rng = mulberry32(seed);
   const roles = parensRoles(vocabSize);
 
-  const examples: Example[] = [];
-  for (let i = 0; i < count; i++) {
-    // Index in generation order; it travels with the sample through the shuffle.
-    examples.push({ index: i, ...generateOne(rng, task, vocabSize, roles, minLen, maxLen) });
+  const test: Example[] = [];
+  const testKeys = new Set<string>();
+  const maxAttempts = Math.max(1000, count * 50);
+  let attempts = 0;
+  while (test.length < count && attempts < maxAttempts) {
+    attempts++;
+    const ex = generateOne(rng, task, vocabSize, roles, minLen, maxLen);
+    const key = sampleKey(ex.input);
+    if (testKeys.has(key)) continue; // duplicate — redraw
+    testKeys.add(key);
+    test.push({ index: test.length, ...ex });
   }
 
-  const shuffled = shuffle(rng, examples);
-  const nTest = Math.floor(count * Math.min(0.5, Math.max(0, testFraction)));
-  const test = shuffled.slice(0, nTest);
-  const train = shuffled.slice(nTest);
-
-  return { task, vocabSize, examples, train, test };
+  return { task, vocabSize, minLen, maxLen, test, testKeys };
 }
 
-/** Convenience: a short human-readable summary used in the dataset panel header. */
-export function datasetSummary(ds: Dataset): string {
-  const kind = isClassification(ds.task) ? "classification" : "transduction";
-  return `${ds.examples.length} examples · ${ds.train.length} train / ${ds.test.length} test · ${kind}`;
+/**
+ * Draw one fresh training sample from the generation distribution, rejecting
+ * collisions with the test set (bounded retries; in the degenerate case where
+ * the space is nearly all test, the last draw is accepted as-is).
+ *
+ * @param rng the loop's serializable RNG — saves restore the exact stream.
+ * @param displayIndex shown as the sample's id (use the iteration count).
+ */
+export function generateTrainExample(
+  ds: Dataset,
+  rng: { next(): number },
+  displayIndex: number,
+): Example {
+  const roles = parensRoles(ds.vocabSize);
+  const r = () => rng.next();
+  let ex = generateOne(r, ds.task, ds.vocabSize, roles, ds.minLen, ds.maxLen);
+  for (let tries = 0; tries < 200 && ds.testKeys.has(sampleKey(ex.input)); tries++) {
+    ex = generateOne(r, ds.task, ds.vocabSize, roles, ds.minLen, ds.maxLen);
+  }
+  return { index: displayIndex, ...ex };
 }

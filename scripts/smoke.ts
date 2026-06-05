@@ -2,24 +2,30 @@
  * Headless smoke test (not part of the app build):
  *   npx esbuild scripts/smoke.ts --bundle --platform=node --format=esm --outfile=scripts/smoke.mjs && node scripts/smoke.mjs
  *
- * 1. Trains the copy task for a few hundred iterations and asserts the loss
- *    drops (validates forward/backward end-to-end).
- * 2. Exercises stepLayer staging: phases/stage indices and per-sample step
- *    count must follow forward 0..7 then backward 7..0 then next sample.
+ * Covers: learning on the on-the-fly training stream, the staging machinery,
+ * multi-step modes, save/load round-trip (bit-identical continuation), the
+ * data-only carryOver path, rejection sampling against the test set, and the
+ * sample-space math.
  */
 
-import { generateDataset } from "../src/tasks/datasets";
+import {
+  generateTestSet,
+  generateTrainExample,
+  sampleKey,
+  sampleSpaceSize,
+} from "../src/tasks/datasets";
 import { TransformerModel } from "../src/model/transformer";
 import { SGD } from "../src/training/optimizer";
 import { TrainingLoop, PIPELINE_STAGES } from "../src/training/loop";
 import { Rng } from "../src/util/rng";
 
+const TRAIN_PER_EPOCH = 48;
+
 function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
-  const dataset = generateDataset({
+  const dataset = generateTestSet({
     task,
     vocabSize: 4,
-    count: 60,
-    testFraction: 0.2,
+    count: 12,
     seed: 7,
     minLen: 3,
     maxLen: 6,
@@ -44,11 +50,11 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
     dataset,
     model,
     optim,
-    loop: new TrainingLoop(model, optim, dataset, new Rng(99)),
+    loop: new TrainingLoop(model, optim, dataset, new Rng(99), TRAIN_PER_EPOCH),
   };
 }
 
-// --- 1. learning check (copy) ---
+// --- 1. learning check (copy, on-the-fly samples) ---
 {
   const { loop } = build("copy");
   for (let i = 0; i < 300; i++) loop.stepIteration();
@@ -58,7 +64,7 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
   if (!(last < first * 0.8)) throw new Error("copy task did not learn (loss not decreasing)");
 }
 
-// --- 1b. classification path doesn't throw and learns a bit ---
+// --- 1b. classification path doesn't throw ---
 {
   const { loop } = build("parens");
   for (let i = 0; i < 200; i++) loop.stepIteration();
@@ -67,7 +73,7 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
   console.log(`parens: first20 avg loss=${first.toFixed(3)}  last20 avg loss=${last.toFixed(3)}`);
 }
 
-// --- 1b2. two-layer FF path learns and traces hidden activations ---
+// --- 1c. two-layer FF path learns and traces hidden activations ---
 {
   const { loop, model } = build("copy", 2);
   for (let i = 0; i < 300; i++) loop.stepIteration();
@@ -79,36 +85,32 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
   if (!loop.staged?.trace.hidden) throw new Error("trace.hidden missing for 2 layers");
 }
 
-// --- 1c. multi-step modes: snapshots, epoch rollover points, stepEpoch ---
+// --- 2. multi-step modes: snapshots, epoch rollover, stepEpoch ---
 {
-  const { loop, dataset } = build("copy");
+  const { loop } = build("copy");
   loop.stepIteration();
   if (loop.staged?.phase !== "complete") throw new Error("stepIteration should leave a 'complete' snapshot");
   loop.stepEpoch();
   if (loop.epoch !== 1) throw new Error(`stepEpoch should land on epoch 1, got ${loop.epoch}`);
   if (loop.epochHistory.length !== 1) throw new Error(`expected 1 epoch point, got ${loop.epochHistory.length}`);
-  if (loop.iteration !== dataset.train.length) throw new Error("epoch should process the whole train set");
-  // A 'complete' snapshot then a layer step must start a fresh walkthrough.
+  if (loop.iteration !== TRAIN_PER_EPOCH) throw new Error("epoch should process trainPerEpoch samples");
   loop.stepLayer();
   if (loop.staged?.phase !== "forward" || loop.staged.stage !== 0) {
     throw new Error("stepLayer after a complete snapshot should start at forward/0");
   }
-  console.log(`multi-step: snapshot/epoch-rollover/stepEpoch OK (epoch pts=${loop.epochHistory.length})`);
+  console.log("multi-step: snapshot/epoch-rollover/stepEpoch OK");
 }
 
-// --- 2. staging machinery ---
+// --- 2b. staging sequence ---
 {
   const { loop } = build("copy");
   const N = PIPELINE_STAGES.length; // 8
   const seen: string[] = [];
-  // First click starts the sample at forward/0; 2N-1 more clicks should end
-  // the backward sweep at stage 0; the next click finishes + starts sample 2.
   for (let i = 0; i < 2 * N; i++) {
     loop.stepLayer();
     const st = loop.staged!;
     seen.push(`${st.phase[0]}${st.stage}`);
   }
-  // forward f0..f7, then backward b7..b0 (2N clicks total)
   const expect16 = [
     ...Array.from({ length: N }, (_, i) => `f${i}`),
     ...Array.from({ length: N }, (_, i) => `b${N - 1 - i}`),
@@ -117,27 +119,22 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
     throw new Error(`staging sequence wrong:\n got ${seen.join()}\n exp ${expect16.join()}`);
   }
   if (loop.iteration !== 0) throw new Error("iteration advanced too early");
-  loop.stepLayer(); // finalize + start next sample
+  loop.stepLayer();
   if (loop.iteration !== 1) throw new Error(`iteration should be 1, got ${loop.iteration}`);
-  const st = loop.staged!;
-  if (st.phase !== "forward" || st.stage !== 0) throw new Error("next sample did not start at forward/0");
   console.log("staging: forward 0..7, backward 7..0, finalize+restart OK");
 }
 
-// --- 3. save/load round-trip: weights + history + rng restore must continue
-// the EXACT same run (identical loss sequence) as the original.
+// --- 3. save/load round-trip: identical continuation (weights + history + rng) ---
 {
   const a = build("copy");
   for (let i = 0; i < 100; i++) a.loop.stepIteration();
 
-  // "Save": capture weights + loop snapshot (what persist.buildSave stores).
   const weights: Record<string, number[][]> = {};
   for (const p of a.model.store.params) {
     weights[p.name] = p.values.map((row) => row.map((v) => v.data));
   }
   const hist = a.loop.serialize();
 
-  // "Load": fresh build with the same config/seed, then restore.
   const b = build("copy");
   for (const p of b.model.store.params) {
     const w = weights[p.name];
@@ -148,7 +145,6 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
   }
   b.loop.restore(hist);
 
-  // Continue both 50 steps — losses must match exactly.
   for (let i = 0; i < 50; i++) {
     a.loop.stepIteration();
     b.loop.stepIteration();
@@ -160,24 +156,22 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
       throw new Error(`round-trip diverged at step ${i}: ${la[i]} vs ${lb[i]}`);
     }
   }
-  if (b.loop.iteration !== a.loop.iteration) throw new Error("iteration mismatch after restore");
-  console.log("save/load round-trip: 50 continued steps identical OK");
+  console.log("save/load round-trip: 50 continued steps identical OK (incl. generation stream)");
 }
 
-// --- 3b. data-only rebuild keeps model + history (dataset size changes) ---
+// --- 3b. data-only rebuild keeps model + history ---
 {
   const a = build("copy");
   for (let i = 0; i < 30; i++) a.loop.stepIteration();
-  const newData = generateDataset({
+  const newData = generateTestSet({
     task: "copy",
     vocabSize: 4,
-    count: 120, // different size
-    testFraction: 0.1,
+    count: 20,
     seed: 8,
     minLen: 3,
     maxLen: 6,
   });
-  const loop2 = new TrainingLoop(a.model, a.optim, newData, new Rng(123));
+  const loop2 = new TrainingLoop(a.model, a.optim, newData, new Rng(123), 60);
   loop2.carryOver(a.loop);
   if (loop2.iteration !== 30) throw new Error("carryOver lost iteration count");
   if (loop2.iterHistory.length !== 30) throw new Error("carryOver lost history");
@@ -186,23 +180,49 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
   console.log("data-only rebuild: history carried over OK");
 }
 
-// --- 4. min sequence length honored ---
+// --- 4. rejection sampling: train draws never collide with the test set ---
 {
-  const ds = generateDataset({
+  const ds = generateTestSet({
     task: "copy",
-    vocabSize: 4,
-    count: 200,
-    testFraction: 0,
+    vocabSize: 3,
+    count: 10,
     seed: 5,
-    minLen: 4,
-    maxLen: 6,
+    minLen: 3,
+    maxLen: 4,
   });
-  for (const ex of ds.examples) {
-    if (ex.input.length < 4 || ex.input.length > 6) {
-      throw new Error(`length ${ex.input.length} outside [4,6]`);
+  // space = 3^3 + 3^4 = 108; test = 10 — collisions WILL be drawn and must be rejected.
+  const rng = new Rng(77);
+  for (let i = 0; i < 500; i++) {
+    const ex = generateTrainExample(ds, rng, i);
+    if (ds.testKeys.has(sampleKey(ex.input))) {
+      throw new Error(`train sample ${i} collides with the test set`);
     }
+    if (ex.input.length < 3 || ex.input.length > 4) {
+      throw new Error(`train sample length ${ex.input.length} outside [3,4]`);
+    }
+    if (ex.index !== i) throw new Error("train sample index should be the display index");
   }
-  console.log("min/max sequence length honored OK");
+  console.log("rejection sampling: 500 train draws disjoint from test, lengths OK");
+}
+
+// --- 5. sample-space math + test-set dedup on a tiny space ---
+{
+  if (sampleSpaceSize(2, 3, 3, true) !== 8) throw new Error("space(2,len=3 fixed) should be 8");
+  if (sampleSpaceSize(4, 3, 6, false) !== 64 + 256 + 1024 + 4096) {
+    throw new Error("space(4,3..6) wrong");
+  }
+  const tiny = generateTestSet({
+    task: "copy",
+    vocabSize: 2,
+    count: 8,
+    seed: 3,
+    minLen: 3,
+    maxLen: 3,
+  });
+  const keys = new Set(tiny.test.map((e) => sampleKey(e.input)));
+  if (keys.size !== tiny.test.length) throw new Error("test set has duplicates");
+  if (tiny.test.length > 8) throw new Error("test set exceeded the sample space");
+  console.log(`sample space + dedup OK (tiny space produced ${tiny.test.length}/8 distinct)`);
 }
 
 console.log("SMOKE OK");

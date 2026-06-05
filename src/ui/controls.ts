@@ -108,6 +108,8 @@ export interface SliderOpts {
 export interface Slider {
   el: HTMLElement;
   set(value: number): void;
+  /** Change the slider's maximum (e.g. dynamic clamps). */
+  setMax(max: number): void;
 }
 
 /** A labelled range slider with a live value readout. */
@@ -150,6 +152,9 @@ export function makeSlider(opts: SliderOpts): Slider {
       if (document.activeElement === input) return;
       input.value = String(value);
       readout.textContent = fmt(value);
+    },
+    setMax(max: number) {
+      if (input.max !== String(max)) input.max = String(max);
     },
   };
 }

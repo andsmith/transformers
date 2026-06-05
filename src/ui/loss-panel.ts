@@ -325,7 +325,7 @@ export function mountLossPanel(host: HTMLElement, ctx: AppContext): PanelHandle 
       g.fillText(fmt(v), pad.l + plotW + 4, y);
     }
 
-    const trainLen = ctx.state.dataset.train.length;
+    const trainLen = ctx.state.trainPerEpoch;
 
     // Epoch boundaries (per-iteration view, only with grid lines on): dashed
     // verticals with labels. When single epochs get too narrow for an

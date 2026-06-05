@@ -12,6 +12,7 @@ import { crossEntropy, sum } from "../engine/ops";
 import { TransformerModel, type ForwardTrace } from "../model/transformer";
 import { SGD } from "./optimizer";
 import { Rng } from "../util/rng";
+import { generateTrainExample } from "../tasks/datasets";
 import { isClassification } from "../tasks/types";
 import type { Dataset, Example } from "../tasks/types";
 
@@ -71,7 +72,8 @@ export interface LoopSnapshotData {
   iteration: number;
   epoch: number;
   cursor: number;
-  order: number[];
+  /** Legacy (pre-0.0.23 fixed-train-set saves); ignored on restore. */
+  order?: number[];
   epochIterStart: number;
   rngState: number;
   /** Optional (added in 0.0.22); older saves simply lack it. */
@@ -81,10 +83,8 @@ export interface LoopSnapshotData {
 export class TrainingLoop {
   iteration = 0;
   epoch = 0;
-  /** Position within the current epoch's (shuffled) visit order. */
+  /** Position within the current epoch (0..trainPerEpoch-1). */
   private cursor = 0;
-  /** This epoch's visit order: indices into data.train, reshuffled per epoch. */
-  private order: number[] = [];
   /** Per-iteration and per-epoch loss history (read by the loss panel). */
   readonly iterHistory: LossPoint[] = [];
   readonly epochHistory: LossPoint[] = [];
@@ -100,34 +100,29 @@ export class TrainingLoop {
     private readonly optim: SGD,
     private readonly data: Dataset,
     private readonly rng: Rng = new Rng((Math.random() * 2 ** 32) >>> 0),
-  ) {
-    this.reshuffle();
-  }
+    private readonly trainPerEpoch: number = 100,
+  ) {}
 
   /** Position within the current epoch (for progress display). */
   get cursorPos(): number {
     return this.cursor;
   }
 
+  /** Number of on-the-fly training samples that make up one epoch. */
   get trainSize(): number {
-    return this.data.train.length;
+    return this.trainPerEpoch;
   }
 
-  /** Fisher-Yates shuffle of the train-set visit order (called each epoch). */
-  private reshuffle(): void {
-    this.order = this.data.train.map((_, i) => i);
-    for (let i = this.order.length - 1; i > 0; i--) {
-      const j = Math.floor(this.rng.next() * (i + 1));
-      [this.order[i], this.order[j]] = [this.order[j], this.order[i]];
-    }
-  }
-
-  /** The next train sample in this epoch's shuffled order. */
+  /**
+   * Draw the next training sample: a fresh random sample from the generation
+   * distribution, rejected against the test set. Driven by the serializable
+   * RNG, so a restored save reproduces the exact same training stream.
+   */
   private nextSample(): Example {
-    return this.data.train[this.order[this.cursor]];
+    return generateTrainExample(this.data, this.rng, this.iteration);
   }
 
-  /** Capture continuation state (histories, counters, order, RNG). */
+  /** Capture continuation state (histories, counters, RNG). */
   serialize(): LoopSnapshotData {
     return {
       iterHistory: this.iterHistory.map((p) => ({ ...p })),
@@ -136,7 +131,6 @@ export class TrainingLoop {
       iteration: this.iteration,
       epoch: this.epoch,
       cursor: this.cursor,
-      order: [...this.order],
       epochIterStart: this.epochIterStart,
       rngState: this.rng.state,
     };
@@ -158,6 +152,7 @@ export class TrainingLoop {
     this.iteration = prev.iteration;
     this.epoch = prev.epoch;
     this.epochIterStart = prev.epochIterStart;
+    this.rng.state = prev.rng.state;
   }
 
   /** Restore a serialized continuation state (after weights are loaded). */
@@ -171,7 +166,6 @@ export class TrainingLoop {
     this.iteration = h.iteration;
     this.epoch = h.epoch;
     this.cursor = h.cursor;
-    this.order = [...h.order];
     this.epochIterStart = h.epochIterStart;
     this.rng.state = h.rngState;
     this.staged = null;
@@ -223,10 +217,9 @@ export class TrainingLoop {
       this.iteration % 10 === 0 ? this.evalLoss(this.data.test, 50) : null;
     this.iterHistory.push({ x: this.iteration, trainLoss, testLoss });
 
-    if (this.cursor >= this.data.train.length) {
+    if (this.cursor >= this.trainPerEpoch) {
       this.cursor = 0;
       this.epoch++;
-      this.reshuffle(); // new random visit order every epoch
       const pts = this.iterHistory.slice(this.epochIterStart);
       const mean =
         pts.reduce((a, p) => a + p.trainLoss, 0) / Math.max(1, pts.length);
@@ -249,8 +242,6 @@ export class TrainingLoop {
    * during both passes are the pre-update ones.
    */
   stepLayer(): void {
-    if (this.data.train.length === 0) return;
-
     if (!this.staged || this.staged.phase === "complete") {
       const sample = this.nextSample();
       const result = this.model.forward(sample.input);
@@ -298,14 +289,13 @@ export class TrainingLoop {
    *   last sample on display.
    */
   stepIteration(snapshot = true): void {
-    if (this.data.train.length === 0) return;
     const sample = this.nextSample();
     const result = this.model.forward(sample.input);
     const lossValue = this.lossFrom(result.logits, sample);
     this.model.zeroGrad();
     lossValue.backward();
     this.optim.step();
-    if (snapshot || this.cursor === this.data.train.length - 1) {
+    if (snapshot || this.cursor === this.trainPerEpoch - 1) {
       this.staged = {
         sample,
         trace: result.trace,
@@ -318,14 +308,13 @@ export class TrainingLoop {
   }
 
   /**
-   * Train one full pass over the train set. The epoch-level loss point is
-   * recorded by the rollover logic in finishSample.
+   * Train one full epoch (trainPerEpoch fresh samples). The epoch-level loss
+   * point is recorded by the rollover logic in finishSample.
    */
   stepEpoch(): void {
-    if (this.data.train.length === 0) return;
     const startEpoch = this.epoch;
     let guard = 0;
-    const maxSteps = this.data.train.length + 1;
+    const maxSteps = this.trainPerEpoch + 1;
     while (this.epoch === startEpoch && guard < maxSteps) {
       this.stepIteration();
       guard++;

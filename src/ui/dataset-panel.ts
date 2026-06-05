@@ -1,26 +1,26 @@
 /**
- * Dataset panel: display mode, vocabulary / sequence-length / size / split
- * controls, a regenerate button, a train/test view selector, and an indexed
- * list of every sample in the selected split (input → output for transduction,
- * input + balanced/unbalanced tag for classification).
+ * Dataset panel. "Dataset Generation" (display, vocabulary, sequence length —
+ * changes reset training) and "Dataset Size" (train samples/epoch, test set
+ * size, regenerate/seed — changes keep the model training). Training samples
+ * are drawn on the fly; the list below shows the FIXED test set (the only
+ * samples with stable ids).
  */
 
-import type { AppContext, DatasetView, DisplayMode } from "../state";
+import type { AppContext, DisplayMode } from "../state";
+import { testSetMax, TRAIN_PER_EPOCH_MAX } from "../state";
 import type { Example } from "../tasks/types";
 import { isClassification } from "../tasks/types";
-import { MAX_SEQ_LEN_LIMIT } from "../tasks/datasets";
+import { MAX_SEQ_LEN_LIMIT, sampleSpaceSize, SPACE_HUGE } from "../tasks/datasets";
 import { tokenChar, tokenColor, MAX_VOCAB } from "../tasks/grammar";
 import {
   makeButton,
   makeCheckbox,
-  makeDropdown,
   makeFieldset,
   makeNumberInput,
   makeRadioGroup,
   makeRangeSlider,
   makeSlider,
   type Checkbox,
-  type Dropdown,
   type NumberInput,
   type RadioGroup,
   type RangeSlider,
@@ -90,35 +90,28 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
   const lenRow = document.createElement("div");
   lenRow.className = "control-pair";
   lenRow.append(lenSlider.el, fixedLenCheck.el);
-  const splitSlider: Slider = makeSlider({
-    label: "Train / test split",
-    min: 0,
-    max: 50,
+  // On-the-fly training: how many fresh samples make up one epoch.
+  const trainSlider: Slider = makeSlider({
+    label: "Train samples/epoch",
+    min: 10,
+    max: TRAIN_PER_EPOCH_MAX,
     step: 1,
     inline: true,
-    value: Math.round(ctx.state.trainTestSplit * 100),
-    format: (v) => `${v}% test`,
-    onInput: (v) => ctx.apply({ trainTestSplit: v / 100 }),
+    value: ctx.state.trainPerEpoch,
+    onInput: (v) => ctx.apply({ trainPerEpoch: v }),
   });
-  // Examples slider (shorter) with live train/test counts beside it.
-  const countSlider: Slider = makeSlider({
-    label: "Examples",
-    min: 10,
-    max: 5000,
-    step: 10,
+  // Fixed held-out test set (max dynamically clamped to 20% of the space).
+  const testSlider: Slider = makeSlider({
+    label: "Test set size",
+    min: 0,
+    max: 500,
+    step: 1,
     inline: true,
-    value: ctx.state.numExamples,
-    onInput: (v) => ctx.apply({ numExamples: v }),
+    value: ctx.state.testSetSize,
+    onInput: (v) => ctx.apply({ testSetSize: v }),
   });
-  const countsLabel = document.createElement("span");
-  countsLabel.className = "counts-label";
-  // The counts label leads with the total, so the slider's own readout is
-  // redundant — hide it.
-  const countReadout = countSlider.el.querySelector<HTMLElement>(".slider-value");
-  if (countReadout) countReadout.style.display = "none";
-  const examplesRow = document.createElement("div");
-  examplesRow.className = "examples-count-row";
-  examplesRow.append(countSlider.el, countsLabel);
+  const spaceHint = document.createElement("div");
+  spaceHint.className = "hint";
   // Regenerate (compact) + seed entry + random-seed checkbox, one row.
   const regenBtn = makeButton("Regenerate", () => ctx.regenerate());
   regenBtn.classList.add("btn-compact");
@@ -137,21 +130,6 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
   regenRow.className = "regen-row";
   regenRow.append(regenBtn, seedInput.el, randomCheck.el);
 
-  const viewDropdown: Dropdown<DatasetView> = makeDropdown(
-    [
-      { value: "train", label: "Train set" },
-      { value: "test", label: "Test set" },
-    ],
-    ctx.state.datasetView,
-    (v) => ctx.apply({ datasetView: v }),
-  );
-  // "Viewing" label inline with the dropdown, styled like the slider labels.
-  const viewRow = document.createElement("div");
-  viewRow.className = "view-row";
-  const viewCap = document.createElement("span");
-  viewCap.textContent = "Viewing";
-  viewRow.append(viewCap, viewDropdown.el);
-
   // --- two sub-boxes: Generation (resets training) | Size (does not) ---
   const genBox = makeFieldset("Dataset Generation");
   genBox.classList.add("sub-box");
@@ -159,14 +137,18 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
 
   const sizeBox = makeFieldset("Dataset Size");
   sizeBox.classList.add("sub-box");
-  sizeBox.append(splitSlider.el, examplesRow, regenRow, viewRow);
+  sizeBox.append(trainSlider.el, testSlider.el, spaceHint, regenRow);
 
   const controls = document.createElement("div");
   controls.className = "dataset-controls";
   controls.append(genBox, sizeBox);
   host.appendChild(controls);
 
-  // --- examples ---
+  // --- examples (the fixed test set — the only samples with stable ids) ---
+  const listCap = document.createElement("div");
+  listCap.className = "caption";
+  listCap.textContent = "Test set (held out from training)";
+  host.appendChild(listCap);
   const examplesEl = document.createElement("div");
   examplesEl.className = "examples";
   host.appendChild(examplesEl);
@@ -201,9 +183,7 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
     }
   }
 
-  /** Render every sample in `list` as an indexed row (uses each sample's
-   *  stable global index), always sorted by index — training visits samples
-   *  in a per-epoch shuffled order, but the list stays stable. Transduction
+  /** Render every test sample as an indexed row, sorted by id. Transduction
    *  shows input → output; classification shows input plus a
    *  balanced/unbalanced tag. */
   function renderList(list: Example[]): void {
@@ -276,24 +256,35 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
 
   function update(): void {
     const s = ctx.state;
-    countsLabel.innerHTML =
-      `<span class="counts-total">${s.dataset.examples.length}</span>` +
-      ` = ${s.dataset.train.length} train + ${s.dataset.test.length} test`;
     displayRadios.set(s.display);
     vocabSlider.set(s.numSymbols);
     lenSlider.set(s.minSeqLen, s.maxSeqLen);
     fixedLenCheck.set(s.fixedLength);
-    countSlider.set(s.numExamples);
-    splitSlider.set(Math.round(s.trainTestSplit * 100));
+    trainSlider.set(s.trainPerEpoch);
+
+    // Dynamic test-set cap: 20% of the theoretical sample space (≤500).
+    const maxTest = testSetMax(s);
+    testSlider.setMax(maxTest);
+    testSlider.set(s.testSetSize);
+    const space = sampleSpaceSize(s.numSymbols, s.minSeqLen, s.maxSeqLen, s.fixedLength);
+    const fmtSpace =
+      space >= SPACE_HUGE
+        ? "≥10¹⁵"
+        : space >= 1e6
+          ? space.toExponential(1)
+          : String(Math.round(space));
+    spaceHint.textContent =
+      `sample space ≈ ${fmtSpace}` +
+      (maxTest < 500 ? ` · test capped at ${maxTest} (20%)` : "");
+
     seedInput.set(s.seed);
     seedInput.el.disabled = s.randomSeed;
     randomCheck.set(s.randomSeed);
-    viewDropdown.set(s.datasetView);
     renderVocab();
 
-    const listKey = `${s.datasetView}|${s.display}`;
+    const listKey = s.display;
     if (s.dataset !== lastDataset || listKey !== lastListKey) {
-      renderList(s.datasetView === "test" ? s.dataset.test : s.dataset.train);
+      renderList(s.dataset.test);
       lastDataset = s.dataset;
       lastListKey = listKey;
     }
