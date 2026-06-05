@@ -26,9 +26,15 @@ export function mountRunControls(host: HTMLElement, ctx: AppContext): PanelHandl
   const left = document.createElement("div");
   left.className = "run-left";
 
+  // Title row: big dark "Run" with the Step/Go button beside it (above the
+  // dropdown, saving horizontal space).
+  const stepBtn = makeButton("Step", () => ctx.step());
   const title = document.createElement("div");
-  title.className = "fieldset-title";
+  title.className = "run-title";
   title.textContent = "Run";
+  const titleRow = document.createElement("div");
+  titleRow.className = "run-title-row";
+  titleRow.append(title, stepBtn);
 
   const granDropdown: Dropdown<StepGranularity> = makeDropdown(
     [
@@ -41,11 +47,7 @@ export function mountRunControls(host: HTMLElement, ctx: AppContext): PanelHandl
     ctx.state.stepGranularity,
     (g) => ctx.apply({ stepGranularity: g }),
   );
-  const stepBtn = makeButton("Step", () => ctx.step());
-
-  const row = document.createElement("div");
-  row.className = "run-row";
-  row.append(granDropdown.el, stepBtn);
+  granDropdown.el.classList.add("full-width");
 
   const counters = document.createElement("div");
   counters.className = "hint";
@@ -59,7 +61,7 @@ export function mountRunControls(host: HTMLElement, ctx: AppContext): PanelHandl
     "Size visualization elements for the maximum sequence length so the " +
     "layout doesn't shift between samples (cell aspect ratio stretches).";
 
-  left.append(title, row, counters, constSizeCheck.el);
+  left.append(titleRow, granDropdown.el, counters, constSizeCheck.el);
 
   // ---------- right 1/3: save / load ----------
   const right = document.createElement("div");

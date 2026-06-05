@@ -57,12 +57,28 @@ body {
   min-width: 0;
 }
 
-/* Run panel split 2/3 (run controls) | 1/3 (save/load). */
+/* Run panel split 50/50 so Save and Load fit side by side on the right. */
 .run-panel {
   flex: 0 0 auto;
   display: grid;
-  grid-template-columns: 2fr 1fr;
+  grid-template-columns: 1fr 1fr;
   gap: 10px;
+}
+
+.run-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.run-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.run-left .dropdown.full-width {
+  width: 100%;
 }
 
 .run-left,
@@ -536,12 +552,18 @@ body.resizing {
   border-bottom: 1px solid var(--line);
 }
 
-/* A row split 40/60 (slider | companion control). */
+/* A row split 40/60 (slider | companion control), visually separated. */
 .control-pair {
   display: grid;
   grid-template-columns: 2fr 3fr;
-  gap: 10px;
+  gap: 12px;
   align-items: start;
+}
+
+/* Divider between the left (slider) and right (companion) halves. */
+.control-pair > :nth-child(2) {
+  border-left: 1px solid var(--line);
+  padding-left: 12px;
 }
 
 .control-pair > .checkbox {
