@@ -51,10 +51,13 @@ export function mountStatusPanel(host: HTMLElement, ctx: AppContext): PanelHandl
     const loop = s.loop;
     const st = loop.staged;
 
+    // Epoch-only title while actively running an epoch mode; otherwise (and
+    // always when paused) include the iteration.
     const byEpoch = s.stepGranularity === "epoch" || s.stepGranularity === "epochs";
-    title.textContent = byEpoch
-      ? `Status - epoch ${loop.epoch}`
-      : `Status - epoch ${loop.epoch} - iter ${loop.iteration}`;
+    title.textContent =
+      byEpoch && s.running
+        ? `Status - epoch ${loop.epoch}`
+        : `Status - epoch ${loop.epoch} - iteration ${loop.iteration}`;
 
     // --- loss (single column, prominent numbers) ---
     const lastIterPt = loop.iterHistory[loop.iterHistory.length - 1];

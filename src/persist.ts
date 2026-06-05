@@ -25,6 +25,8 @@ export interface ExperimentConfig {
   minSeqLen: number;
   maxSeqLen: number;
   fixedLength: boolean;
+  /** Added 0.0.32; older saves default to true (the prior behavior). */
+  uniformLen?: boolean;
   seed: number;
   randomSeed: boolean;
   /** Legacy fields (pre-0.0.23 fixed-train-set saves), used for migration. */
@@ -61,6 +63,7 @@ export function buildSave(state: AppState, opts: SaveOptions): SaveFile {
     minSeqLen: state.minSeqLen,
     maxSeqLen: state.maxSeqLen,
     fixedLength: state.fixedLength,
+    uniformLen: state.uniformLen,
     seed: state.seed,
     randomSeed: state.randomSeed,
   };
@@ -123,6 +126,7 @@ export function applySave(
   state.minSeqLen = e.minSeqLen;
   state.maxSeqLen = e.maxSeqLen;
   state.fixedLength = e.fixedLength;
+  state.uniformLen = e.uniformLen ?? true;
   state.seed = e.seed;
   state.randomSeed = e.randomSeed;
   state.running = false;

@@ -24,6 +24,8 @@ export interface GenConfig {
   vocabSize: number;
   minLen: number;
   maxLen: number;
+  /** true = each length equally likely; false = length ∝ V^L. */
+  uniformLen: boolean;
 }
 
 /** Identity key for rejection sampling (input determines output). */
@@ -65,6 +67,30 @@ export function mulberry32(seed: number): () => number {
 
 function randInt(rng: () => number, lo: number, hi: number): number {
   return lo + Math.floor(rng() * (hi - lo + 1));
+}
+
+/**
+ * Sample a sequence length in [lo, hi]. uniform=true picks each length with
+ * equal probability; uniform=false weights length L by V^L, i.e. samples
+ * uniformly over the whole sample space (longer sequences are far more
+ * numerous, so they dominate).
+ */
+function sampleLen(
+  rng: () => number,
+  lo: number,
+  hi: number,
+  vocabSize: number,
+  uniform: boolean,
+): number {
+  if (uniform || hi <= lo) return randInt(rng, lo, hi);
+  let total = 0;
+  for (let L = lo; L <= hi; L++) total += Math.pow(vocabSize, L);
+  let r = rng() * total;
+  for (let L = lo; L <= hi; L++) {
+    r -= Math.pow(vocabSize, L);
+    if (r < 0) return L;
+  }
+  return hi;
 }
 
 function randomSeq(rng: () => number, vocabSize: number, len: number): number[] {
@@ -129,8 +155,9 @@ function generateOne(
   roles: ParensRoles,
   minLen: number,
   maxLen: number,
+  uniformLen: boolean,
 ): Omit<Example, "index"> {
-  const len = randInt(rng, minLen, maxLen);
+  const len = sampleLen(rng, minLen, maxLen, vocabSize, uniformLen);
 
   switch (task) {
     case "copy": {
@@ -167,7 +194,7 @@ export interface TestSetOptions extends GenConfig {
  * the same seed reproduces the same test set. Indices are 0..N-1.
  */
 export function generateTestSet(opts: TestSetOptions): Dataset {
-  const { task, vocabSize, count, seed } = opts;
+  const { task, vocabSize, count, seed, uniformLen } = opts;
   const minLen = Math.min(opts.minLen, opts.maxLen);
   const maxLen = opts.maxLen;
   const rng = mulberry32(seed);
@@ -179,14 +206,14 @@ export function generateTestSet(opts: TestSetOptions): Dataset {
   let attempts = 0;
   while (test.length < count && attempts < maxAttempts) {
     attempts++;
-    const ex = generateOne(rng, task, vocabSize, roles, minLen, maxLen);
+    const ex = generateOne(rng, task, vocabSize, roles, minLen, maxLen, uniformLen);
     const key = sampleKey(ex.input);
     if (testKeys.has(key)) continue; // duplicate — redraw
     testKeys.add(key);
     test.push({ index: test.length, ...ex });
   }
 
-  return { task, vocabSize, minLen, maxLen, test, testKeys };
+  return { task, vocabSize, minLen, maxLen, uniformLen, test, testKeys };
 }
 
 /**
@@ -206,11 +233,13 @@ export function generateTrainExample(
 ): Example {
   const roles = parensRoles(ds.vocabSize);
   const r = () => rng.next();
-  let ex = generateOne(r, ds.task, ds.vocabSize, roles, ds.minLen, ds.maxLen);
+  const draw = () =>
+    generateOne(r, ds.task, ds.vocabSize, roles, ds.minLen, ds.maxLen, ds.uniformLen);
+  let ex = draw();
   let tries = 0;
   while (ds.testKeys.has(sampleKey(ex.input)) && tries < 200) {
     if (stats) stats.rejections++;
-    ex = generateOne(r, ds.task, ds.vocabSize, roles, ds.minLen, ds.maxLen);
+    ex = draw();
     tries++;
   }
   return { index: displayIndex, ...ex };

@@ -36,6 +36,9 @@ export interface Dataset {
   vocabSize: number;
   minLen: number;
   maxLen: number;
+  /** Length prior: true = each length equally likely; false = length ∝ V^L
+   *  (uniform over the whole sample space). */
+  uniformLen: boolean;
   test: Example[];
   /** sampleKey(input) of every test example, for rejection sampling. */
   testKeys: Set<string>;

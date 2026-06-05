@@ -91,6 +91,15 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
   const lenRow = document.createElement("div");
   lenRow.className = "control-pair";
   lenRow.append(lenSlider.el, fixedLenCheck.el);
+
+  const uniformLenCheck: Checkbox = makeCheckbox(
+    "Uniform length prior",
+    ctx.state.uniformLen,
+    (c) => ctx.apply({ uniformLen: c }),
+  );
+  uniformLenCheck.el.title =
+    "On: every length equally likely (short sequences over-represented). " +
+    "Off: length ∝ |V|^L — uniform over the whole sample space.";
   // On-the-fly training: how many fresh samples make up one epoch.
   const trainSlider: Slider = makeSlider({
     label: "Train samples/epoch",
@@ -134,7 +143,7 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
   // --- two sub-boxes: Generation (resets training) | Size (does not) ---
   const genBox = makeFieldset("Dataset Generation");
   genBox.classList.add("sub-box");
-  genBox.append(displayRadios.el, vocabRow, lenRow);
+  genBox.append(displayRadios.el, vocabRow, lenRow, uniformLenCheck.el);
 
   const sizeBox = makeFieldset("Dataset Size");
   sizeBox.classList.add("sub-box");
@@ -333,6 +342,7 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
     vocabSlider.set(s.numSymbols);
     lenSlider.set(s.minSeqLen, s.maxSeqLen);
     fixedLenCheck.set(s.fixedLength);
+    uniformLenCheck.set(s.uniformLen);
     trainSlider.set(s.trainPerEpoch);
 
     // Dynamic test-set cap: 20% of the theoretical sample space (≤500).

@@ -9,6 +9,7 @@ import {
   createInitialState,
   rebuild,
   rebuildDataset,
+  effectiveTrainPerEpoch,
   testSetMax,
   type AppContext,
   type AppState,
@@ -36,6 +37,7 @@ const REBUILD_KEYS = new Set<keyof AppState>([
   "minSeqLen",
   "maxSeqLen",
   "fixedLength",
+  "uniformLen",
 ]);
 
 /** Dataset-SIZE keys: regenerate the test set / change the epoch length but
@@ -125,7 +127,7 @@ window.addEventListener("DOMContentLoaded", () => {
       state.optim,
       state.dataset,
       new Rng(state.seed ^ 0x51ed270b),
-      state.trainPerEpoch,
+      effectiveTrainPerEpoch(state, state.dataset.test.length),
     );
     loop.carryOver(state.loop);
     state.loop = loop;

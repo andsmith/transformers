@@ -4,7 +4,7 @@
  * after `main.ts` mutates it (the whiteboard_web convention).
  */
 
-import { generateTestSet, mulberry32, sampleSpaceSize } from "./tasks/datasets";
+import { generateTestSet, mulberry32, sampleSpaceSize, SPACE_HUGE } from "./tasks/datasets";
 import type { Dataset, Task } from "./tasks/types";
 import type { PEScheme } from "./model/embeddings";
 import { TransformerModel } from "./model/transformer";
@@ -43,6 +43,7 @@ export interface AppState {
   minSeqLen: number; // shortest generated sequence
   maxSeqLen: number; // longest generated sequence
   fixedLength: boolean; // if true, every sequence is exactly maxSeqLen
+  uniformLen: boolean; // length prior: equal-per-length vs ∝ V^L
   seed: number;
   randomSeed: boolean; // Regenerate draws a fresh random seed each time
   dataset: Dataset;
@@ -106,6 +107,7 @@ export interface Defaults {
   minSeqLen: number;
   maxSeqLen: number;
   fixedLength: boolean;
+  uniformLen: boolean;
 }
 
 const DEFAULTS: Defaults = {
@@ -120,6 +122,7 @@ const DEFAULTS: Defaults = {
   minSeqLen: 3,
   maxSeqLen: 7,
   fixedLength: false,
+  uniformLen: true,
 };
 
 export interface GenStateSlice {
@@ -129,7 +132,23 @@ export interface GenStateSlice {
   minSeqLen: number;
   maxSeqLen: number;
   fixedLength: boolean;
+  uniformLen: boolean;
   seed: number;
+}
+
+/**
+ * Effective training samples per epoch: clamped to the number of distinct
+ * non-test samples available, so when the requested count exceeds the sample
+ * space the loop doesn't waste passes (and hammer rejection sampling) on
+ * samples that can't be distinct.
+ */
+export function effectiveTrainPerEpoch(
+  s: { numSymbols: number; minSeqLen: number; maxSeqLen: number; fixedLength: boolean; trainPerEpoch: number },
+  testCount: number,
+): number {
+  const space = sampleSpaceSize(s.numSymbols, s.minSeqLen, s.maxSeqLen, s.fixedLength);
+  const available = Math.max(1, Math.floor(Math.min(space, SPACE_HUGE)) - testCount);
+  return Math.min(s.trainPerEpoch, available);
 }
 
 /** Largest allowed test set under the current generation rules:
@@ -155,6 +174,7 @@ export function rebuildDataset(state: GenStateSlice): Dataset {
     seed: state.seed,
     minLen,
     maxLen,
+    uniformLen: state.uniformLen,
   });
 }
 
@@ -209,7 +229,7 @@ export function rebuild(state: GenStateSlice & {
     optim,
     dataset,
     new Rng(state.seed ^ 0x51ed270b),
-    state.trainPerEpoch,
+    effectiveTrainPerEpoch(state, dataset.test.length),
   );
 
   return { dataset, model, optim, loop };

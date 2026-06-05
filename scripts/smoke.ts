@@ -29,6 +29,7 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
     seed: 7,
     minLen: 3,
     maxLen: 6,
+    uniformLen: true,
   });
   const model = new TransformerModel(
     {
@@ -202,6 +203,7 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
     seed: 8,
     minLen: 3,
     maxLen: 6,
+    uniformLen: true,
   });
   const loop2 = new TrainingLoop(a.model, a.optim, newData, new Rng(123), 60);
   loop2.carryOver(a.loop);
@@ -221,6 +223,7 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
     seed: 5,
     minLen: 3,
     maxLen: 4,
+    uniformLen: true,
   });
   // space = 3^3 + 3^4 = 108; test = 10 — collisions WILL be drawn and must be rejected.
   const rng = new Rng(77);
@@ -237,6 +240,25 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
   console.log("rejection sampling: 500 train draws disjoint from test, lengths OK");
 }
 
+// --- 4b. length prior: proportional draws skew long, uniform draws don't ---
+{
+  const cfg = { task: "copy" as const, vocabSize: 4, count: 0, seed: 1, minLen: 2, maxLen: 6 };
+  const uni = generateTestSet({ ...cfg, uniformLen: true });
+  const prop = generateTestSet({ ...cfg, uniformLen: false });
+  const rng1 = new Rng(11);
+  const rng2 = new Rng(11);
+  let uniLong = 0;
+  let propLong = 0;
+  for (let i = 0; i < 400; i++) {
+    if (generateTrainExample(uni, rng1, i).input.length >= 5) uniLong++;
+    if (generateTrainExample(prop, rng2, i).input.length >= 5) propLong++;
+  }
+  if (!(propLong > uniLong * 1.5)) {
+    throw new Error(`length prior ineffective: uniLong=${uniLong} propLong=${propLong}`);
+  }
+  console.log(`length prior: uniform ${uniLong}/400 long, proportional ${propLong}/400 long`);
+}
+
 // --- 5. sample-space math + test-set dedup on a tiny space ---
 {
   if (sampleSpaceSize(2, 3, 3, true) !== 8) throw new Error("space(2,len=3 fixed) should be 8");
@@ -250,6 +272,7 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
     seed: 3,
     minLen: 3,
     maxLen: 3,
+    uniformLen: true,
   });
   const keys = new Set(tiny.test.map((e) => sampleKey(e.input)));
   if (keys.size !== tiny.test.length) throw new Error("test set has duplicates");
