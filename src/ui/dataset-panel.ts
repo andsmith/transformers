@@ -273,9 +273,13 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
         : space >= 1e6
           ? space.toExponential(1)
           : String(Math.round(space));
+    // What share of the whole space the test set occupies.
+    const pct = (s.dataset.test.length / space) * 100;
+    const fmtPct =
+      pct >= 0.01 || pct === 0 ? `${pct.toFixed(2)}%` : `${pct.toExponential(1)}%`;
     spaceHint.textContent =
-      `sample space ≈ ${fmtSpace}` +
-      (maxTest < 500 ? ` · test capped at ${maxTest} (20%)` : "");
+      `sample space ≈ ${fmtSpace}, test set ${fmtPct}` +
+      (maxTest < 500 ? ` (capped at ${maxTest})` : "");
 
     seedInput.set(s.seed);
     seedInput.el.disabled = s.randomSeed;
