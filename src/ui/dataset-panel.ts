@@ -8,12 +8,13 @@
 import type { AppContext, DatasetView, DisplayMode } from "../state";
 import type { Example } from "../tasks/types";
 import { isClassification } from "../tasks/types";
-import { datasetSummary, MAX_SEQ_LEN_LIMIT } from "../tasks/datasets";
+import { MAX_SEQ_LEN_LIMIT } from "../tasks/datasets";
 import { tokenChar, tokenColor, MAX_VOCAB } from "../tasks/grammar";
 import {
   makeButton,
   makeCheckbox,
   makeDropdown,
+  makeFieldset,
   makeNumberInput,
   makeRadioGroup,
   makeRangeSlider,
@@ -35,10 +36,6 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
   header.className = "panel-header";
   header.textContent = "Dataset";
   host.appendChild(header);
-
-  const summary = document.createElement("div");
-  summary.className = "hint";
-  host.appendChild(summary);
 
   // --- controls ---
   const displayRadios: RadioGroup<DisplayMode> = makeRadioGroup(
@@ -93,15 +90,6 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
   const lenRow = document.createElement("div");
   lenRow.className = "control-pair";
   lenRow.append(lenSlider.el, fixedLenCheck.el);
-  const countSlider: Slider = makeSlider({
-    label: "Examples",
-    min: 10,
-    max: 5000,
-    step: 10,
-    inline: true,
-    value: ctx.state.numExamples,
-    onInput: (v) => ctx.apply({ numExamples: v }),
-  });
   const splitSlider: Slider = makeSlider({
     label: "Train / test split",
     min: 0,
@@ -112,6 +100,21 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
     format: (v) => `${v}% test`,
     onInput: (v) => ctx.apply({ trainTestSplit: v / 100 }),
   });
+  // Examples slider (shorter) with live train/test counts beside it.
+  const countSlider: Slider = makeSlider({
+    label: "Examples",
+    min: 10,
+    max: 5000,
+    step: 10,
+    inline: true,
+    value: ctx.state.numExamples,
+    onInput: (v) => ctx.apply({ numExamples: v }),
+  });
+  const countsLabel = document.createElement("span");
+  countsLabel.className = "counts-label";
+  const examplesRow = document.createElement("div");
+  examplesRow.className = "examples-count-row";
+  examplesRow.append(countSlider.el, countsLabel);
   // Regenerate (compact) + seed entry + random-seed checkbox, one row.
   const regenBtn = makeButton("Regenerate", () => ctx.regenerate());
   regenBtn.classList.add("btn-compact");
@@ -145,17 +148,18 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
   viewCap.textContent = "Viewing";
   viewRow.append(viewCap, viewDropdown.el);
 
+  // --- two sub-boxes: Generation (resets training) | Size (does not) ---
+  const genBox = makeFieldset("Dataset Generation");
+  genBox.classList.add("sub-box");
+  genBox.append(displayRadios.el, vocabRow, lenRow);
+
+  const sizeBox = makeFieldset("Dataset Size");
+  sizeBox.classList.add("sub-box");
+  sizeBox.append(splitSlider.el, examplesRow, regenRow, viewRow);
+
   const controls = document.createElement("div");
   controls.className = "dataset-controls";
-  controls.append(
-    displayRadios.el,
-    vocabRow,
-    lenRow,
-    countSlider.el,
-    splitSlider.el,
-    regenRow,
-    viewRow,
-  );
+  controls.append(genBox, sizeBox);
   host.appendChild(controls);
 
   // --- examples ---
@@ -268,7 +272,7 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
 
   function update(): void {
     const s = ctx.state;
-    summary.textContent = datasetSummary(s.dataset);
+    countsLabel.textContent = `train: ${s.dataset.train.length}, test: ${s.dataset.test.length}`;
     displayRadios.set(s.display);
     vocabSlider.set(s.numSymbols);
     lenSlider.set(s.minSeqLen, s.maxSeqLen);

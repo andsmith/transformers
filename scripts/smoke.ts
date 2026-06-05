@@ -164,6 +164,28 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
   console.log("save/load round-trip: 50 continued steps identical OK");
 }
 
+// --- 3b. data-only rebuild keeps model + history (dataset size changes) ---
+{
+  const a = build("copy");
+  for (let i = 0; i < 30; i++) a.loop.stepIteration();
+  const newData = generateDataset({
+    task: "copy",
+    vocabSize: 4,
+    count: 120, // different size
+    testFraction: 0.1,
+    seed: 8,
+    minLen: 3,
+    maxLen: 6,
+  });
+  const loop2 = new TrainingLoop(a.model, a.optim, newData, new Rng(123));
+  loop2.carryOver(a.loop);
+  if (loop2.iteration !== 30) throw new Error("carryOver lost iteration count");
+  if (loop2.iterHistory.length !== 30) throw new Error("carryOver lost history");
+  loop2.stepIteration();
+  if (loop2.iteration !== 31) throw new Error("loop did not continue after carryOver");
+  console.log("data-only rebuild: history carried over OK");
+}
+
 // --- 4. min sequence length honored ---
 {
   const ds = generateDataset({

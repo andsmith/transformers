@@ -134,6 +134,29 @@ body {
   border-color: var(--line);
 }
 
+/* Sub-boxes inside the dataset panel (Generation / Size). */
+.dataset-controls .sub-box {
+  min-width: 0;
+}
+
+/* Examples slider with live train/test counts beside it. */
+.examples-count-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.examples-count-row .slider {
+  flex: 1;
+  min-width: 0;
+}
+
+.counts-label {
+  font-size: calc(var(--ui-font-px) - 1px);
+  color: var(--ink);
+  white-space: nowrap;
+}
+
 /* ---- compact regenerate row: button + seed + random ---- */
 .regen-row {
   display: flex;
@@ -700,17 +723,50 @@ body.resizing {
 
 .status-panel {
   flex: none;
-  width: 250px;
+  width: 310px;
   display: flex;
   flex-direction: column;
   gap: 4px;
   overflow: auto;
 }
 
-.status-body {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
+/* 2x2 grid of status sections: model | dataset / loss | timing. */
+.status-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+.status-cell {
+  min-width: 0;
+}
+
+.status-cell-title {
+  font-size: calc(var(--ui-font-px) - 2px);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  font-weight: 600;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 2px;
+}
+
+.status-cell-body {
+  font-size: calc(var(--ui-font-px) - 1px);
+  color: var(--ink);
+  line-height: 1.45;
+}
+
+.status-big {
+  font-size: calc(var(--ui-font-px) + 3px);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.status-dim {
+  color: var(--muted);
 }
 
 .status-line {

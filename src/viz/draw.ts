@@ -108,19 +108,25 @@ export function drawMatrix(
   const gx = x + lw;
   const gy = y + capH(font);
 
-  // Formal name in the left gutter, vertically centered on the cells.
+  // Formal name in the left gutter, vertically centered on the cells and
+  // right-aligned against the matrix edge (constant gap to the heatmap).
   if (opts.mathLabel) {
     g.fillStyle = INK;
     g.textBaseline = "middle";
     g.textAlign = "left";
     const mainFont = font + 5;
-    g.font = `italic bold ${mainFont}px Georgia, "Times New Roman", serif`;
+    const subFont = `italic ${font}px Georgia, "Times New Roman", serif`;
+    const mainFontStr = `italic bold ${mainFont}px Georgia, "Times New Roman", serif`;
+    g.font = subFont;
+    const subW = opts.mathLabel.sub ? g.measureText(opts.mathLabel.sub).width : 0;
+    g.font = mainFontStr;
     const mainW = g.measureText(opts.mathLabel.main).width;
     const my = gy + h / 2;
-    g.fillText(opts.mathLabel.main, x, my);
+    const startX = gx - 4 - subW - mainW; // right edge sits 4px from the cells
+    g.fillText(opts.mathLabel.main, startX, my);
     if (opts.mathLabel.sub) {
-      g.font = `italic ${font}px Georgia, "Times New Roman", serif`;
-      g.fillText(opts.mathLabel.sub, x + mainW + 1, my + mainFont * 0.35);
+      g.font = subFont;
+      g.fillText(opts.mathLabel.sub, startX + mainW + 1, my + mainFont * 0.35);
     }
     g.textBaseline = "alphabetic";
   }

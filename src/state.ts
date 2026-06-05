@@ -111,8 +111,32 @@ const DEFAULTS: Defaults = {
   minSeqLen: 3,
   maxSeqLen: 7,
   fixedLength: false,
-  trainTestSplit: 0.2,
+  trainTestSplit: 0.1,
 };
+
+/** Generate just the dataset from the current settings (no model rebuild). */
+export function rebuildDataset(state: {
+  task: Task;
+  numSymbols: number;
+  numExamples: number;
+  minSeqLen: number;
+  maxSeqLen: number;
+  fixedLength: boolean;
+  trainTestSplit: number;
+  seed: number;
+}): Dataset {
+  const maxLen = state.maxSeqLen;
+  const minLen = state.fixedLength ? maxLen : Math.min(state.minSeqLen, maxLen);
+  return generateDataset({
+    task: state.task,
+    vocabSize: state.numSymbols,
+    count: state.numExamples,
+    testFraction: state.trainTestSplit,
+    seed: state.seed,
+    minLen,
+    maxLen,
+  });
+}
 
 /** One-line model/experiment summary (top title + Status panel). */
 export function modelSummary(s: {
@@ -149,20 +173,7 @@ export function rebuild(state: {
   optim: SGD;
   loop: TrainingLoop;
 } {
-  // When fixedLength is on every sequence is exactly maxSeqLen; otherwise they
-  // vary within [minSeqLen, maxSeqLen] (clamped so min never exceeds max).
-  const maxLen = state.maxSeqLen;
-  const minLen = state.fixedLength ? maxLen : Math.min(state.minSeqLen, maxLen);
-
-  const dataset = generateDataset({
-    task: state.task,
-    vocabSize: state.numSymbols,
-    count: state.numExamples,
-    testFraction: state.trainTestSplit,
-    seed: state.seed,
-    minLen,
-    maxLen,
-  });
+  const dataset = rebuildDataset(state);
 
   // Derive a model-init RNG from the same seed (offset so weights differ from
   // the data stream).
@@ -174,7 +185,7 @@ export function rebuild(state: {
       embedDim: state.embedDim,
       peScheme: state.peScheme,
       numOutputLayers: state.numOutputLayers,
-      maxLen, // positional table must cover the longest sequence
+      maxLen: state.maxSeqLen, // positional table must cover the longest sequence
     },
     rng,
   );
@@ -195,7 +206,7 @@ export function createInitialState(): AppState {
     running: false,
     display: "chars",
     seed,
-    randomSeed: false,
+    randomSeed: true,
     lossView: "iteration",
     lossLogScale: false,
     datasetView: "train",

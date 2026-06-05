@@ -129,6 +129,22 @@ export class TrainingLoop {
     };
   }
 
+  /**
+   * Adopt another loop's histories and counters (used when only the dataset
+   * is regenerated/resized: the model keeps training, the curves keep
+   * growing). The new epoch starts fresh (cursor 0, new shuffle) since the
+   * train set changed.
+   */
+  carryOver(prev: TrainingLoop): void {
+    this.iterHistory.length = 0;
+    for (const p of prev.iterHistory) this.iterHistory.push(p);
+    this.epochHistory.length = 0;
+    for (const p of prev.epochHistory) this.epochHistory.push(p);
+    this.iteration = prev.iteration;
+    this.epoch = prev.epoch;
+    this.epochIterStart = prev.epochIterStart;
+  }
+
   /** Restore a serialized continuation state (after weights are loaded). */
   restore(h: LoopSnapshotData): void {
     this.iterHistory.length = 0;

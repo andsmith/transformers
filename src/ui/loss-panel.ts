@@ -25,6 +25,31 @@ const TRAIN_COLOR = "#2b7cff";
 const TEST_COLOR = "#ff6b35";
 const CLICK_TOLERANCE_PX = 5; // below this a "drag" counts as a click
 
+/** Five-pointed star marker. */
+function drawStar(
+  g: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  r: number,
+  color: string,
+): void {
+  g.fillStyle = color;
+  g.strokeStyle = "#444";
+  g.lineWidth = 0.75;
+  g.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const rad = i % 2 === 0 ? r : r * 0.45;
+    const a = -Math.PI / 2 + (i * Math.PI) / 5;
+    const x = cx + rad * Math.cos(a);
+    const y = cy + rad * Math.sin(a);
+    if (i === 0) g.moveTo(x, y);
+    else g.lineTo(x, y);
+  }
+  g.closePath();
+  g.fill();
+  g.stroke();
+}
+
 export function mountLossPanel(host: HTMLElement, ctx: AppContext): PanelHandle {
   host.classList.add("panel", "loss-panel");
   host.innerHTML = "";
@@ -262,10 +287,11 @@ export function mountLossPanel(host: HTMLElement, ctx: AppContext): PanelHandle 
       g.fillText(fmt(v), 4, yOf(v) + 3);
     }
 
+    const trainLen = ctx.state.dataset.train.length;
+
     // Epoch boundaries (per-iteration view): thin dashed gray verticals, plus
     // floating "epoch k" labels when the epochs are wide enough to fit them.
     if (ctx.state.lossView === "iteration") {
-      const trainLen = ctx.state.dataset.train.length;
       if (trainLen > 0) {
         const lineShade = "#b6c0cb";
         g.strokeStyle = lineShade;
@@ -327,6 +353,31 @@ export function mountLossPanel(host: HTMLElement, ctx: AppContext): PanelHandle 
     plotLine(TRAIN_COLOR, (p) => p.trainLoss);
     plotLine(TEST_COLOR, (p) => p.testLoss);
     g.restore();
+
+    // Star at the lowest test epoch-mean loss. Color encodes where in the
+    // training history it sits: first third = red (severely overtrained
+    // since), middle = yellow, final third = green.
+    {
+      const eh = ctx.state.loop.epochHistory;
+      let best: LossPoint | null = null;
+      for (const p of eh) {
+        if (p.testLoss !== null && (best === null || p.testLoss < (best.testLoss as number))) {
+          best = p;
+        }
+      }
+      if (best && best.testLoss !== null && eh.length > 0) {
+        const firstX = eh[0].x;
+        const lastX = eh[eh.length - 1].x;
+        const frac = lastX > firstX ? (best.x - firstX) / (lastX - firstX) : 1;
+        const color = frac < 1 / 3 ? "#e0413a" : frac < 2 / 3 ? "#f5c518" : "#2fbf71";
+        const bx = ctx.state.lossView === "epoch" ? best.x : best.x * trainLen;
+        const sx = xOf(bx);
+        const sy = yOf(best.testLoss);
+        if (sx >= pad.l && sx <= pad.l + plotW && sy >= pad.t - 2 && sy <= pad.t + plotH + 2) {
+          drawStar(g, sx, sy, 6, color);
+        }
+      }
+    }
 
     // --- drag-selection overlay ---
     if (dragStart !== null && dragCur !== null && Math.abs(dragCur - dragStart) >= CLICK_TOLERANCE_PX) {

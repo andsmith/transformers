@@ -8,9 +8,12 @@ import "./styles.css";
 import {
   createInitialState,
   rebuild,
+  rebuildDataset,
   type AppContext,
   type AppState,
 } from "./state";
+import { TrainingLoop } from "./training/loop";
+import { Rng } from "./util/rng";
 import { mountTopPanel, type PanelHandle } from "./ui/top-panel";
 import { mountDatasetPanel } from "./ui/dataset-panel";
 import { mountLossPanel } from "./ui/loss-panel";
@@ -22,19 +25,21 @@ import { mountSplitters } from "./ui/splitters";
 import { applySave, type SaveFile } from "./persist";
 import { VERSION } from "./version";
 
-/** Patch keys that require tearing down and rebuilding model + dataset. */
+/** Dataset-GENERATION / model keys: changing these resets training entirely. */
 const REBUILD_KEYS = new Set<keyof AppState>([
   "task",
   "numSymbols",
   "embedDim",
   "peScheme",
   "numOutputLayers",
-  "numExamples",
   "minSeqLen",
   "maxSeqLen",
   "fixedLength",
-  "trainTestSplit",
 ]);
+
+/** Dataset-SIZE keys: regenerate/resplit the data but keep the model and its
+ *  training history — nothing about the architecture depends on them. */
+const DATA_ONLY_KEYS = new Set<keyof AppState>(["numExamples", "trainTestSplit"]);
 
 /** Per-frame time budget (ms) for continuous "run" mode — scalar-autograd
  *  iterations vary a lot in cost with seqLen/embedDim, so budget time rather
@@ -110,6 +115,20 @@ window.addEventListener("DOMContentLoaded", () => {
     state.loop = built.loop;
   }
 
+  /** Regenerate just the data; the model keeps its weights and the loss
+   *  curves keep growing (used for dataset-size changes and Regenerate). */
+  function doRebuildDataOnly(): void {
+    state.dataset = rebuildDataset(state);
+    const loop = new TrainingLoop(
+      state.model,
+      state.optim,
+      state.dataset,
+      new Rng(state.seed ^ 0x51ed270b),
+    );
+    loop.carryOver(state.loop);
+    state.loop = loop;
+  }
+
   // Remembered loss-row height so expanding restores the user's chosen size.
   let savedRowBottom = "210px";
 
@@ -143,21 +162,23 @@ window.addEventListener("DOMContentLoaded", () => {
           root.style.setProperty("--row-bottom", savedRowBottom);
         }
       }
-      const needsRebuild = Object.keys(patch).some((k) =>
-        REBUILD_KEYS.has(k as keyof AppState),
-      );
-      if (needsRebuild) {
+      const keys = Object.keys(patch);
+      if (keys.some((k) => REBUILD_KEYS.has(k as keyof AppState))) {
+        // Generation/model change: full reset.
         state.running = false;
         doRebuild();
+      } else if (keys.some((k) => DATA_ONLY_KEYS.has(k as keyof AppState))) {
+        // Size-only change: new data, same model, history continues.
+        doRebuildDataOnly();
       }
       refreshAll();
     },
     regenerate() {
       // Deterministic mode reuses the entered seed (reproducible); random mode
-      // draws a fresh one each time (and displays it).
+      // draws a fresh one each time (and displays it). The model keeps
+      // training — only the data is re-rolled.
       if (state.randomSeed) state.seed = (Math.random() * 2 ** 32) >>> 0;
-      state.running = false;
-      doRebuild();
+      doRebuildDataOnly();
       refreshAll();
     },
     step() {
