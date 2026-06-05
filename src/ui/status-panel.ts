@@ -1,15 +1,11 @@
 /**
- * Status panel (bottom-left): a 2×2 grid of live sections —
- *   model  (embedding dim, positional encoding, FF layers, heads)
- *   dataset (max input/output dims, train & test sizes)
- *   loss   (most recent sample + epoch means, prominent)
- *   timing (samples/second averaged at ≤1 Hz, seconds/epoch)
- * plus a compact progress/phase line under the title.
+ * Status panel (bottom-left): title carries the progress ("Status - epoch e"
+ * when running by epochs, "... - iter i" otherwise), and below it two columns
+ * of live text — timing (left: samples/s averaged at ≤1 Hz, seconds/epoch) and
+ * loss (right: most recent sample + epoch means, prominent).
  */
 
 import type { AppContext } from "../state";
-import { PIPELINE_STAGES } from "../training/loop";
-import { isClassification } from "../tasks/types";
 import type { PanelHandle } from "./top-panel";
 
 export function mountStatusPanel(host: HTMLElement, ctx: AppContext): PanelHandle {
@@ -18,14 +14,10 @@ export function mountStatusPanel(host: HTMLElement, ctx: AppContext): PanelHandl
 
   const title = document.createElement("div");
   title.className = "panel-header";
-  title.textContent = "Status";
-
-  const phaseLine = document.createElement("div");
-  phaseLine.className = "status-line status-phase";
 
   const grid = document.createElement("div");
   grid.className = "status-grid";
-  host.append(title, phaseLine, grid);
+  host.append(title, grid);
 
   const section = (name: string): HTMLDivElement => {
     const cell = document.createElement("div");
@@ -40,10 +32,8 @@ export function mountStatusPanel(host: HTMLElement, ctx: AppContext): PanelHandl
     return body;
   };
 
-  const modelBody = section("model");
-  const dataBody = section("dataset");
-  const lossBody = section("loss");
   const timingBody = section("timing");
+  const lossBody = section("loss");
 
   // --- timing accumulators (sampled at most once per second) ---
   let lastT = performance.now();
@@ -61,36 +51,10 @@ export function mountStatusPanel(host: HTMLElement, ctx: AppContext): PanelHandl
     const loop = s.loop;
     const st = loop.staged;
 
-    // Progress / phase line.
-    const progress =
-      `epoch ${loop.epoch} · sample ${Math.min(loop.cursorPos + 1, loop.trainSize)}` +
-      `/${loop.trainSize}`;
-    if (!st) {
-      phaseLine.textContent = `${progress} · idle`;
-      phaseLine.className = "status-line status-phase idle";
-    } else if (st.phase === "forward") {
-      phaseLine.textContent = `${progress} · Forward — ${PIPELINE_STAGES[st.stage]?.title ?? ""}`;
-      phaseLine.className = "status-line status-phase forward";
-    } else if (st.phase === "backward") {
-      phaseLine.textContent = `${progress} · Backprop — ${PIPELINE_STAGES[st.stage]?.title ?? ""}`;
-      phaseLine.className = "status-line status-phase backward";
-    } else {
-      phaseLine.textContent = `${progress} · sample #${st.sample.index}${s.running ? " · training…" : ""}`;
-      phaseLine.className = "status-line status-phase complete";
-    }
-
-    // model
-    const pe = s.peScheme === "sinusoidal" ? "positional" : "learned";
-    modelBody.innerHTML =
-      `D<sub>embed</sub> = ${s.embedDim}<br>` +
-      `P<sub>embed</sub>: ${pe}<br>` +
-      `FF layers: ${s.numOutputLayers} · heads: ${s.numHeads}`;
-
-    // dataset
-    const dOut = isClassification(s.task) ? 1 : s.maxSeqLen;
-    dataBody.innerHTML =
-      `d<sub>input</sub>(max) = ${s.maxSeqLen} · d<sub>output</sub>(max) = ${dOut}<br>` +
-      `train: ${s.dataset.train.length} · test: ${s.dataset.test.length}`;
+    const byEpoch = s.stepGranularity === "epoch" || s.stepGranularity === "epochs";
+    title.textContent = byEpoch
+      ? `Status - epoch ${loop.epoch}`
+      : `Status - epoch ${loop.epoch} - iter ${loop.iteration}`;
 
     // loss (prominent numbers)
     const lastIterPt = loop.iterHistory[loop.iterHistory.length - 1];

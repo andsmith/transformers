@@ -112,6 +112,10 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
   });
   const countsLabel = document.createElement("span");
   countsLabel.className = "counts-label";
+  // The counts label leads with the total, so the slider's own readout is
+  // redundant — hide it.
+  const countReadout = countSlider.el.querySelector<HTMLElement>(".slider-value");
+  if (countReadout) countReadout.style.display = "none";
   const examplesRow = document.createElement("div");
   examplesRow.className = "examples-count-row";
   examplesRow.append(countSlider.el, countsLabel);
@@ -272,7 +276,9 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
 
   function update(): void {
     const s = ctx.state;
-    countsLabel.textContent = `train: ${s.dataset.train.length}, test: ${s.dataset.test.length}`;
+    countsLabel.innerHTML =
+      `<span class="counts-total">${s.dataset.examples.length}</span>` +
+      ` = ${s.dataset.train.length} train + ${s.dataset.test.length} test`;
     displayRadios.set(s.display);
     vocabSlider.set(s.numSymbols);
     lenSlider.set(s.minSeqLen, s.maxSeqLen);

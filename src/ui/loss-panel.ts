@@ -79,6 +79,13 @@ export function mountLossPanel(host: HTMLElement, ctx: AppContext): PanelHandle 
     (c) => ctx.apply({ lossLogScale: c }),
   );
 
+  const gridCheck: Checkbox = makeCheckbox(
+    "grid lines",
+    ctx.state.lossGridLines,
+    (c) => ctx.apply({ lossGridLines: c }),
+  );
+  gridCheck.el.title = "Horizontal grid lines and epoch boundaries";
+
   const legend = document.createElement("span");
   legend.className = "legend";
   legend.innerHTML =
@@ -96,7 +103,7 @@ export function mountLossPanel(host: HTMLElement, ctx: AppContext): PanelHandle 
     ctx.apply({ lossCollapsed: !ctx.state.lossCollapsed }),
   );
 
-  head.append(title, viewRadios.el, logCheck.el, legend, resetBtn, collapseBtn);
+  head.append(title, viewRadios.el, logCheck.el, gridCheck.el, legend, resetBtn, collapseBtn);
   host.appendChild(head);
 
   // --- canvas ---
@@ -204,17 +211,18 @@ export function mountLossPanel(host: HTMLElement, ctx: AppContext): PanelHandle 
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, w, h);
 
-    const pad = { l: 38, r: 8, t: 8, b: 18 };
+    const pad = { l: 40, r: 40, t: 8, b: 18 };
     const plotW = w - pad.l - pad.r;
     const plotH = h - pad.t - pad.b;
 
-    // axes
+    // axes (left, bottom, right — y labels live on both sides)
     g.strokeStyle = "#ccd6e0";
     g.lineWidth = 1;
     g.beginPath();
     g.moveTo(pad.l, pad.t);
     g.lineTo(pad.l, pad.t + plotH);
     g.lineTo(pad.l + plotW, pad.t + plotH);
+    g.lineTo(pad.l + plotW, pad.t);
     g.stroke();
 
     const data = seriesFor();
@@ -278,49 +286,98 @@ export function mountLossPanel(host: HTMLElement, ctx: AppContext): PanelHandle 
       ticks = [0, top / 2, top];
     }
 
-    // y-axis ticks
+    const gridOn = ctx.state.lossGridLines;
+
+    // Horizontal grid lines: majors at the tick values, minors splitting each
+    // interval (drawn in y-pixel space) into quarters.
+    if (gridOn) {
+      const ys = ticks.map((v) => yOf(v)).sort((a, b) => a - b);
+      g.lineWidth = 1;
+      for (let i = 0; i < ys.length - 1; i++) {
+        g.strokeStyle = "#eef1f5"; // minor
+        for (let q = 1; q <= 3; q++) {
+          const y = ys[i] + ((ys[i + 1] - ys[i]) * q) / 4;
+          g.beginPath();
+          g.moveTo(pad.l, y);
+          g.lineTo(pad.l + plotW, y);
+          g.stroke();
+        }
+      }
+      g.strokeStyle = "#dde3ea"; // major
+      for (const y of ys) {
+        g.beginPath();
+        g.moveTo(pad.l, y);
+        g.lineTo(pad.l + plotW, y);
+        g.stroke();
+      }
+    }
+
+    // y-axis tick labels on BOTH sides, dark.
     const fmt = (v: number) =>
       v === 0 ? "0" : v >= 0.01 ? v.toFixed(2) : v.toExponential(0);
-    g.fillStyle = "#8a98a8";
+    g.fillStyle = "#1f2a36";
     g.font = "10px system-ui, sans-serif";
     for (const v of ticks) {
-      g.fillText(fmt(v), 4, yOf(v) + 3);
+      const y = yOf(v) + 3;
+      g.textAlign = "right";
+      g.fillText(fmt(v), pad.l - 4, y);
+      g.textAlign = "left";
+      g.fillText(fmt(v), pad.l + plotW + 4, y);
     }
 
     const trainLen = ctx.state.dataset.train.length;
 
-    // Epoch boundaries (per-iteration view): thin dashed gray verticals, plus
-    // floating "epoch k" labels when the epochs are wide enough to fit them.
-    if (ctx.state.lossView === "iteration") {
-      if (trainLen > 0) {
-        const lineShade = "#b6c0cb";
-        g.strokeStyle = lineShade;
-        g.lineWidth = 1;
-        g.setLineDash([3, 3]);
-        for (let k = 1; k * trainLen <= fullMax; k++) {
-          const bx = xOf(k * trainLen);
-          if (bx > pad.l && bx < pad.l + plotW) {
-            g.beginPath();
-            g.moveTo(bx, pad.t);
-            g.lineTo(bx, pad.t + plotH);
-            g.stroke();
-          }
-        }
-        g.setLineDash([]);
+    // Epoch boundaries (per-iteration view, only with grid lines on): dashed
+    // verticals with labels. When single epochs get too narrow for an
+    // "epoch n" label, lines thin out to nice intervals (2, 5, 10, ...) and
+    // labels become ranges ("epochs 10 to 19") sized to fit between lines.
+    if (gridOn && ctx.state.lossView === "iteration" && trainLen > 0) {
+      const lineShade = "#b6c0cb";
+      const epochPxW = (trainLen / spanX) * plotW;
+      const maxEpoch = Math.ceil(fullMax / trainLen);
 
-        const epochPxW = (trainLen / spanX) * plotW;
-        if (epochPxW >= 48) {
-          g.fillStyle = lineShade;
-          g.font = "10px system-ui, sans-serif";
-          g.textAlign = "center";
-          for (let k = 0; k * trainLen <= fullMax; k++) {
-            const cx = xOf((k + 0.5) * trainLen);
-            if (cx > pad.l && cx < pad.l + plotW) {
-              g.fillText(`epoch ${k}`, cx, pad.t + 9);
-            }
-          }
-          g.textAlign = "left";
+      g.font = "10px system-ui, sans-serif";
+      const PADDING = 12;
+      const singleW = g.measureText(`epoch ${maxEpoch}`).width + PADDING;
+      const NICE = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000];
+      let K = 0; // 0 = no labels fit at any nice interval
+      for (const k of NICE) {
+        const lblW =
+          k === 1
+            ? singleW
+            : g.measureText(`epochs ${maxEpoch} to ${maxEpoch}`).width + PADDING;
+        if (k * epochPxW >= lblW) {
+          K = k;
+          break;
         }
+      }
+      const lineEvery = K || NICE[NICE.length - 1];
+
+      g.strokeStyle = lineShade;
+      g.lineWidth = 1;
+      g.setLineDash([3, 3]);
+      for (let k = lineEvery; k * trainLen <= fullMax; k += lineEvery) {
+        const bx = xOf(k * trainLen);
+        if (bx > pad.l && bx < pad.l + plotW) {
+          g.beginPath();
+          g.moveTo(bx, pad.t);
+          g.lineTo(bx, pad.t + plotH);
+          g.stroke();
+        }
+      }
+      g.setLineDash([]);
+
+      if (K > 0) {
+        g.fillStyle = lineShade;
+        g.textAlign = "center";
+        for (let a = 0; a * trainLen <= fullMax; a += K) {
+          const b = a + K - 1;
+          const cx = xOf(((a + b + 1) / 2) * trainLen);
+          if (cx > pad.l && cx < pad.l + plotW) {
+            g.fillText(K === 1 ? `epoch ${a}` : `epochs ${a} to ${b}`, cx, pad.t + 9);
+          }
+        }
+        g.textAlign = "left";
       }
     }
 
@@ -397,6 +454,7 @@ export function mountLossPanel(host: HTMLElement, ctx: AppContext): PanelHandle 
     canvas.style.display = collapsed ? "none" : "";
     viewRadios.el.style.display = collapsed ? "none" : "";
     logCheck.el.style.display = collapsed ? "none" : "";
+    gridCheck.el.style.display = collapsed ? "none" : "";
     legend.style.display = collapsed ? "none" : "";
     resetBtn.style.display = !collapsed && zoom ? "" : "none";
     collapseBtn.textContent = collapsed ? "▲ show" : "▼ hide";
@@ -407,6 +465,7 @@ export function mountLossPanel(host: HTMLElement, ctx: AppContext): PanelHandle 
     }
     viewRadios.set(ctx.state.lossView);
     logCheck.set(ctx.state.lossLogScale);
+    gridCheck.set(ctx.state.lossGridLines);
     draw();
   }
 

@@ -47,6 +47,7 @@ export interface AppState {
   // --- loss panel ---
   lossView: LossView;
   lossLogScale: boolean; // log-scale y-axis
+  lossGridLines: boolean; // horizontal grid + epoch boundary lines
 
   // --- which split is shown in the dataset list ---
   datasetView: DatasetView;
@@ -209,6 +210,7 @@ export function createInitialState(): AppState {
     randomSeed: true,
     lossView: "iteration",
     lossLogScale: false,
+    lossGridLines: true,
     datasetView: "train",
     weightsCmap: "viridis",
     actsCmap: "bwr",

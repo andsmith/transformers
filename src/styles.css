@@ -157,6 +157,11 @@ body {
   white-space: nowrap;
 }
 
+.counts-total {
+  color: var(--accent);
+  font-weight: 700;
+}
+
 /* ---- compact regenerate row: button + seed + random ---- */
 .regen-row {
   display: flex;
@@ -723,7 +728,7 @@ body.resizing {
 
 .status-panel {
   flex: none;
-  width: 310px;
+  width: 260px;
   display: flex;
   flex-direction: column;
   gap: 4px;
