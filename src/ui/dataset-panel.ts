@@ -143,12 +143,37 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
   }
 
   /** Render every sample in `list` as an indexed row (uses each sample's
-   *  stable global index). Transduction shows input → output; classification
-   *  shows the input plus a balanced/unbalanced tag. */
+   *  stable global index), always sorted by index — training visits samples
+   *  in a per-epoch shuffled order, but the list stays stable. Transduction
+   *  shows input → output; classification shows input plus a
+   *  balanced/unbalanced tag. */
   function renderList(list: Example[]): void {
     const classification = isClassification(ctx.state.task);
     const frag = document.createDocumentFragment();
-    for (const ex of list) {
+
+    // Column header: "Input → Output".
+    const head = document.createElement("div");
+    head.className = "examples-header";
+    const headIdx = document.createElement("span");
+    headIdx.className = "ex-index";
+    const headIn = document.createElement("span");
+    headIn.textContent = "Input";
+    head.append(headIdx, headIn);
+    const headOut = document.createElement("span");
+    headOut.textContent = "Output";
+    if (classification) {
+      headOut.className = "head-right";
+      head.append(headOut);
+    } else {
+      const headArrow = document.createElement("span");
+      headArrow.className = "arrow";
+      headArrow.textContent = "→";
+      head.append(headArrow, headOut);
+    }
+    frag.appendChild(head);
+
+    const sorted = [...list].sort((a, b) => a.index - b.index);
+    for (const ex of sorted) {
       const rowEl = document.createElement("div");
       rowEl.className = "example-row";
 

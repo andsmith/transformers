@@ -56,8 +56,10 @@ export interface LossPoint {
 export class TrainingLoop {
   iteration = 0;
   epoch = 0;
-  /** Index of the next train sample to process this epoch. */
+  /** Position within the current epoch's (shuffled) visit order. */
   private cursor = 0;
+  /** This epoch's visit order: indices into data.train, reshuffled per epoch. */
+  private order: number[] = [];
   /** Per-iteration and per-epoch loss history (read by the loss panel). */
   readonly iterHistory: LossPoint[] = [];
   readonly epochHistory: LossPoint[] = [];
@@ -70,7 +72,24 @@ export class TrainingLoop {
     private readonly model: TransformerModel,
     private readonly optim: SGD,
     private readonly data: Dataset,
-  ) {}
+    private readonly rng: () => number = Math.random,
+  ) {
+    this.reshuffle();
+  }
+
+  /** Fisher-Yates shuffle of the train-set visit order (called each epoch). */
+  private reshuffle(): void {
+    this.order = this.data.train.map((_, i) => i);
+    for (let i = this.order.length - 1; i > 0; i--) {
+      const j = Math.floor(this.rng() * (i + 1));
+      [this.order[i], this.order[j]] = [this.order[j], this.order[i]];
+    }
+  }
+
+  /** The next train sample in this epoch's shuffled order. */
+  private nextSample(): Example {
+    return this.data.train[this.order[this.cursor]];
+  }
 
   /** Loss for already-computed logits. */
   private lossFrom(logits: Value[][], ex: Example): Value {
@@ -121,6 +140,7 @@ export class TrainingLoop {
     if (this.cursor >= this.data.train.length) {
       this.cursor = 0;
       this.epoch++;
+      this.reshuffle(); // new random visit order every epoch
       const pts = this.iterHistory.slice(this.epochIterStart);
       const mean =
         pts.reduce((a, p) => a + p.trainLoss, 0) / Math.max(1, pts.length);
@@ -146,7 +166,7 @@ export class TrainingLoop {
     if (this.data.train.length === 0) return;
 
     if (!this.staged || this.staged.phase === "complete") {
-      const sample = this.data.train[this.cursor];
+      const sample = this.nextSample();
       const result = this.model.forward(sample.input);
       const lossValue = this.lossFrom(result.logits, sample);
       this.model.zeroGrad();
@@ -189,7 +209,7 @@ export class TrainingLoop {
    */
   stepIteration(): void {
     if (this.data.train.length === 0) return;
-    const sample = this.data.train[this.cursor];
+    const sample = this.nextSample();
     const result = this.model.forward(sample.input);
     const lossValue = this.lossFrom(result.logits, sample);
     this.model.zeroGrad();

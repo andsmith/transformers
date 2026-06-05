@@ -39,7 +39,14 @@ function build(task: "copy" | "parens") {
     })(),
   );
   const optim = new SGD(model.store, { learningRate: 0.1 });
-  return { dataset, model, optim, loop: new TrainingLoop(model, optim, dataset) };
+  let s2 = 99;
+  const shuffleRng = () => ((s2 = (s2 * 16807) % 2147483647) / 2147483647);
+  return {
+    dataset,
+    model,
+    optim,
+    loop: new TrainingLoop(model, optim, dataset, shuffleRng),
+  };
 }
 
 // --- 1. learning check (copy) ---

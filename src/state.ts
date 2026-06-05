@@ -142,7 +142,8 @@ export function rebuild(state: {
     rng,
   );
   const optim = new SGD(model.store, { learningRate: state.learningRate });
-  const loop = new TrainingLoop(model, optim, dataset);
+  // Separate RNG stream for the per-epoch sample-order shuffle.
+  const loop = new TrainingLoop(model, optim, dataset, mulberry32(state.seed ^ 0x51ed270b));
 
   return { dataset, model, optim, loop };
 }
