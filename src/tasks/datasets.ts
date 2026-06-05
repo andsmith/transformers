@@ -196,17 +196,22 @@ export function generateTestSet(opts: TestSetOptions): Dataset {
  *
  * @param rng the loop's serializable RNG — saves restore the exact stream.
  * @param displayIndex shown as the sample's id (use the iteration count).
+ * @param stats optional counter: `rejections` increments per test-set hit.
  */
 export function generateTrainExample(
   ds: Dataset,
   rng: { next(): number },
   displayIndex: number,
+  stats?: { rejections: number },
 ): Example {
   const roles = parensRoles(ds.vocabSize);
   const r = () => rng.next();
   let ex = generateOne(r, ds.task, ds.vocabSize, roles, ds.minLen, ds.maxLen);
-  for (let tries = 0; tries < 200 && ds.testKeys.has(sampleKey(ex.input)); tries++) {
+  let tries = 0;
+  while (ds.testKeys.has(sampleKey(ex.input)) && tries < 200) {
+    if (stats) stats.rejections++;
     ex = generateOne(r, ds.task, ds.vocabSize, roles, ds.minLen, ds.maxLen);
+    tries++;
   }
   return { index: displayIndex, ...ex };
 }

@@ -96,6 +96,10 @@ export class TrainingLoop {
   readonly timingHistory: TimingPoint[] = [];
   /** Index into iterHistory where the current epoch began (for epoch means). */
   private epochIterStart = 0;
+  /** Test-set hits (rejected draws) while sampling the current epoch. */
+  private rejCounter = { rejections: 0 };
+  /** Test-set hits during the most recently completed epoch (-1 = none yet). */
+  lastEpochRejections = -1;
   /** In-progress per-stage walkthrough (null between samples). */
   staged: StagedSample | null = null;
 
@@ -123,7 +127,12 @@ export class TrainingLoop {
    * RNG, so a restored save reproduces the exact same training stream.
    */
   private nextSample(): Example {
-    return generateTrainExample(this.data, this.rng, this.iteration);
+    return generateTrainExample(this.data, this.rng, this.iteration, this.rejCounter);
+  }
+
+  /** Test-set hits while sampling the epoch in progress. */
+  get rejectionsThisEpoch(): number {
+    return this.rejCounter.rejections;
   }
 
   /** Capture continuation state (histories, counters, RNG). */
@@ -157,6 +166,8 @@ export class TrainingLoop {
     this.epoch = prev.epoch;
     this.epochIterStart = prev.epochIterStart;
     this.rng.state = prev.rng.state;
+    this.rejCounter.rejections = prev.rejCounter.rejections;
+    this.lastEpochRejections = prev.lastEpochRejections;
   }
 
   /** Restore a serialized continuation state (after weights are loaded). */
@@ -224,6 +235,8 @@ export class TrainingLoop {
     if (this.cursor >= this.trainPerEpoch) {
       this.cursor = 0;
       this.epoch++;
+      this.lastEpochRejections = this.rejCounter.rejections;
+      this.rejCounter.rejections = 0;
       const pts = this.iterHistory.slice(this.epochIterStart);
       const mean =
         pts.reduce((a, p) => a + p.trainLoss, 0) / Math.max(1, pts.length);
