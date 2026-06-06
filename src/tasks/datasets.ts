@@ -9,6 +9,7 @@
 
 import type { Dataset, Example, Task } from "./types";
 import { isBalanced, parensRoles, type ParensRoles } from "./grammar";
+import { enumerateMatches, inputToGlyphs, matchesAny } from "./grok";
 
 /** Default sequence-length range for generated strings (short strings). */
 export const MIN_LEN = 3;
@@ -26,6 +27,10 @@ export interface GenConfig {
   maxLen: number;
   /** true = each length equally likely; false = length ∝ V^L. */
   uniformLen: boolean;
+  /** Parens: max nesting depth. */
+  parensMaxDepth: number;
+  /** Parens: forbid mixing delimiter types within a nest. */
+  parensNoMixedNesting: boolean;
 }
 
 /** Identity key for rejection sampling (input determines output). */
@@ -99,15 +104,26 @@ function randomSeq(rng: () => number, vocabSize: number, len: number): number[] 
   return out;
 }
 
-/** A random balanced bracket sequence (Dyck word) over the available pairs. */
-function randomDyck(rng: () => number, roles: ParensRoles, pairs: number): number[] {
+/**
+ * A random balanced bracket sequence (Dyck word) over the available pairs.
+ * @param maxDepth caps nesting depth (stack height).
+ * @param noMixed when true, a nested open reuses the enclosing pair type
+ *   (only top-level opens pick a new delimiter type), so no nest mixes types.
+ */
+function randomDyck(
+  rng: () => number,
+  roles: ParensRoles,
+  pairs: number,
+  maxDepth: number,
+  noMixed: boolean,
+): number[] {
   const res: number[] = [];
   const stack: number[] = [];
   const total = 2 * pairs;
   let opened = 0;
   for (let step = 0; step < total; step++) {
     const remaining = total - step;
-    const canOpen = opened < pairs;
+    const canOpen = opened < pairs && stack.length < maxDepth;
     const canClose = stack.length > 0;
     const mustClose = remaining <= stack.length;
     let doOpen: boolean;
@@ -117,7 +133,10 @@ function randomDyck(rng: () => number, roles: ParensRoles, pairs: number): numbe
     else doOpen = rng() < 0.5;
 
     if (doOpen) {
-      const k = randInt(rng, 0, roles.openIds.length - 1);
+      const k =
+        noMixed && stack.length > 0
+          ? stack[stack.length - 1]
+          : randInt(rng, 0, roles.openIds.length - 1);
       res.push(roles.openIds[k]);
       stack.push(k);
       opened++;
@@ -130,10 +149,16 @@ function randomDyck(rng: () => number, roles: ParensRoles, pairs: number): numbe
 }
 
 /** Build a balanced parens example of the given total length, with distractors. */
-function balancedParens(rng: () => number, roles: ParensRoles, len: number): number[] {
+function balancedParens(
+  rng: () => number,
+  roles: ParensRoles,
+  len: number,
+  maxDepth: number,
+  noMixed: boolean,
+): number[] {
   const maxPairs = Math.floor(len / 2);
   const pairs = randInt(rng, 0, Math.min(maxPairs, len));
-  const brackets = randomDyck(rng, roles, pairs);
+  const brackets = randomDyck(rng, roles, pairs, maxDepth, noMixed);
 
   // Sprinkle the remaining slots with distractors (or extra opens/closes that
   // still keep balance is unnecessary — distractors are ignored by the checker).
@@ -148,82 +173,144 @@ function balancedParens(rng: () => number, roles: ParensRoles, len: number): num
   return result;
 }
 
+/** The output a task assigns to a given input (deterministic). */
+export function taskOutput(task: Task, input: number[], roles: ParensRoles): number[] {
+  switch (task) {
+    case "copy":
+      return input.slice();
+    case "reverse":
+      return input.slice().reverse();
+    case "sort":
+      return input.slice().sort((a, b) => a - b);
+    case "parens":
+      return [isBalanced(input, roles) ? 1 : 0];
+  }
+}
+
 function generateOne(
   rng: () => number,
-  task: Task,
-  vocabSize: number,
+  cfg: GenConfig,
   roles: ParensRoles,
-  minLen: number,
-  maxLen: number,
-  uniformLen: boolean,
 ): Omit<Example, "index"> {
+  const { task, vocabSize, minLen, maxLen, uniformLen } = cfg;
   const len = sampleLen(rng, minLen, maxLen, vocabSize, uniformLen);
-
-  switch (task) {
-    case "copy": {
-      const input = randomSeq(rng, vocabSize, len);
-      return { input, output: input.slice() };
-    }
-    case "reverse": {
-      const input = randomSeq(rng, vocabSize, len);
-      return { input, output: input.slice().reverse() };
-    }
-    case "sort": {
-      const input = randomSeq(rng, vocabSize, len);
-      return { input, output: input.slice().sort((a, b) => a - b) };
-    }
-    case "parens": {
-      // Half the time construct a balanced string, half the time go fully
-      // random — then label whatever we produced. This keeps the two classes
-      // roughly balanced.
-      const input =
-        rng() < 0.5 ? balancedParens(rng, roles, len) : randomSeq(rng, vocabSize, len);
-      return { input, output: [isBalanced(input, roles) ? 1 : 0] };
-    }
+  let input: number[];
+  if (task === "parens") {
+    // Half balanced (respecting depth/no-mixed options), half fully random.
+    input =
+      rng() < 0.5
+        ? balancedParens(rng, roles, len, cfg.parensMaxDepth, cfg.parensNoMixedNesting)
+        : randomSeq(rng, vocabSize, len);
+  } else {
+    input = randomSeq(rng, vocabSize, len);
   }
+  return { input, output: taskOutput(task, input, roles) };
 }
 
 export interface TestSetOptions extends GenConfig {
   count: number;
   seed: number;
+  /** Compiled grok filters; empty = ordinary (non-grok) test set. */
+  filters: RegExp[];
+  /** Enumerate the space when its size ≤ this; else sample. */
+  enumCap: number;
+}
+
+function shuffleInPlace<T>(rng: () => number, a: T[]): void {
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = randInt(rng, 0, i);
+    [a[i], a[j]] = [a[j], a[i]];
+  }
 }
 
 /**
- * Generate the fixed test set: `count` DISTINCT samples (deduplicated by
- * input key, bounded attempts so tiny sample spaces can't hang), seeded so
- * the same seed reproduces the same test set. Indices are 0..N-1.
+ * Generate the fixed test set. Without grok filters it is `count` DISTINCT
+ * random samples. With filters it is the held-out subset matching any filter:
+ * exact (enumerated) when the space ≤ enumCap, else rejection-sampled.
  */
 export function generateTestSet(opts: TestSetOptions): Dataset {
-  const { task, vocabSize, count, seed, uniformLen } = opts;
+  const { task, vocabSize, count, seed, uniformLen, filters, enumCap } = opts;
   const minLen = Math.min(opts.minLen, opts.maxLen);
   const maxLen = opts.maxLen;
+  const cfg: GenConfig = {
+    task,
+    vocabSize,
+    minLen,
+    maxLen,
+    uniformLen,
+    parensMaxDepth: opts.parensMaxDepth,
+    parensNoMixedNesting: opts.parensNoMixedNesting,
+  };
   const rng = mulberry32(seed);
   const roles = parensRoles(vocabSize);
 
   const test: Example[] = [];
   const testKeys = new Set<string>();
-  const maxAttempts = Math.max(1000, count * 50);
-  let attempts = 0;
-  while (test.length < count && attempts < maxAttempts) {
-    attempts++;
-    const ex = generateOne(rng, task, vocabSize, roles, minLen, maxLen, uniformLen);
-    const key = sampleKey(ex.input);
-    if (testKeys.has(key)) continue; // duplicate — redraw
+  let matchInfo: Dataset["matchInfo"];
+
+  const pushKey = (key: string) => {
+    const input = key.split(",").map(Number);
     testKeys.add(key);
-    test.push({ index: test.length, ...ex });
+    test.push({ index: test.length, input, output: taskOutput(task, input, roles) });
+  };
+
+  if (filters.length > 0) {
+    const en = enumerateMatches(task, vocabSize, minLen, maxLen, filters, enumCap);
+    if (en.mode === "enumerated") {
+      shuffleInPlace(rng, en.keys);
+      for (let i = 0; i < Math.min(count, en.keys.length); i++) pushKey(en.keys[i]);
+      matchInfo = { count: en.count, mode: "enumerated" };
+    } else {
+      // Space too large to enumerate — rejection-sample matching draws.
+      const maxAttempts = Math.max(20000, count * 200);
+      let attempts = 0;
+      while (test.length < count && attempts < maxAttempts) {
+        attempts++;
+        const ex = generateOne(rng, cfg, roles);
+        const key = sampleKey(ex.input);
+        if (testKeys.has(key)) continue;
+        if (!matchesAny(filters, inputToGlyphs(task, vocabSize, ex.input))) continue;
+        testKeys.add(key);
+        test.push({ index: test.length, ...ex });
+      }
+      matchInfo = { count: test.length, mode: "sampled" };
+    }
+  } else {
+    const maxAttempts = Math.max(1000, count * 50);
+    let attempts = 0;
+    while (test.length < count && attempts < maxAttempts) {
+      attempts++;
+      const ex = generateOne(rng, cfg, roles);
+      const key = sampleKey(ex.input);
+      if (testKeys.has(key)) continue;
+      testKeys.add(key);
+      test.push({ index: test.length, ...ex });
+    }
   }
 
-  return { task, vocabSize, minLen, maxLen, uniformLen, test, testKeys };
+  return {
+    task,
+    vocabSize,
+    minLen,
+    maxLen,
+    uniformLen,
+    parensMaxDepth: opts.parensMaxDepth,
+    parensNoMixedNesting: opts.parensNoMixedNesting,
+    filters,
+    test,
+    testKeys,
+    matchInfo,
+  };
 }
 
 /**
  * Draw one fresh training sample from the generation distribution, rejecting
- * collisions with the test set (bounded retries; in the degenerate case where
- * the space is nearly all test, the last draw is accepted as-is).
+ * any sample that is in the test set OR matches a grok filter (the held-out
+ * language). Bounded retries; the last draw is accepted as-is on exhaustion.
  *
  * @param rng the loop's serializable RNG — saves restore the exact stream.
  * @param displayIndex shown as the sample's id (use the iteration count).
- * @param stats optional counter: `rejections` increments per test-set hit.
+ * @param stats optional counter: `rejections` increments per held-out hit.
  */
 export function generateTrainExample(
   ds: Dataset,
@@ -233,13 +320,25 @@ export function generateTrainExample(
 ): Example {
   const roles = parensRoles(ds.vocabSize);
   const r = () => rng.next();
-  const draw = () =>
-    generateOne(r, ds.task, ds.vocabSize, roles, ds.minLen, ds.maxLen, ds.uniformLen);
-  let ex = draw();
+  const cfg: GenConfig = {
+    task: ds.task,
+    vocabSize: ds.vocabSize,
+    minLen: ds.minLen,
+    maxLen: ds.maxLen,
+    uniformLen: ds.uniformLen,
+    parensMaxDepth: ds.parensMaxDepth,
+    parensNoMixedNesting: ds.parensNoMixedNesting,
+  };
+  const heldOut = (input: number[]): boolean =>
+    ds.testKeys.has(sampleKey(input)) ||
+    (ds.filters.length > 0 &&
+      matchesAny(ds.filters, inputToGlyphs(ds.task, ds.vocabSize, input)));
+
+  let ex = generateOne(r, cfg, roles);
   let tries = 0;
-  while (ds.testKeys.has(sampleKey(ex.input)) && tries < 200) {
+  while (heldOut(ex.input) && tries < 200) {
     if (stats) stats.rejections++;
-    ex = draw();
+    ex = generateOne(r, cfg, roles);
     tries++;
   }
   return { index: displayIndex, ...ex };

@@ -10,6 +10,7 @@ import {
   rebuild,
   rebuildDataset,
   effectiveTrainPerEpoch,
+  maxNestingDepth,
   testSetMax,
   type AppContext,
   type AppState,
@@ -38,6 +39,9 @@ const REBUILD_KEYS = new Set<keyof AppState>([
   "maxSeqLen",
   "fixedLength",
   "uniformLen",
+  "parensMaxDepth",
+  "parensNoMixedNesting",
+  "grokFilters",
 ]);
 
 /** Dataset-SIZE keys: regenerate the test set / change the epoch length but
@@ -168,8 +172,11 @@ window.addEventListener("DOMContentLoaded", () => {
       }
       const keys = Object.keys(patch);
       if (keys.some((k) => REBUILD_KEYS.has(k as keyof AppState))) {
-        // Generation/model change: full reset. Shrinking the sample space may
-        // also force the test set smaller (20% cap).
+        // Generation/model change: full reset. Keep dependent values in range.
+        state.parensMaxDepth = Math.min(
+          state.parensMaxDepth,
+          maxNestingDepth(state.maxSeqLen),
+        );
         state.testSetSize = Math.min(state.testSetSize, testSetMax(state));
         state.running = false;
         doRebuild();

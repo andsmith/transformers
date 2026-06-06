@@ -718,6 +718,51 @@ body.resizing {
   min-height: 16px;
 }
 
+/* Click-to-copy vocab glyphs (for pasting into grok filters). */
+.tok.copyable {
+  cursor: pointer;
+}
+
+.tok.copyable:hover {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.tok.copied {
+  outline: 2px solid #2fbf71;
+  outline-offset: 1px;
+}
+
+/* Task-options sub-block inside Dataset Generation. */
+.task-options {
+  border-style: dashed;
+}
+
+/* Grok filter input + random button. */
+.grok-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.text-input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 7px;
+  font-family: ui-monospace, monospace;
+  font-size: calc(var(--ui-font-px) - 1px);
+}
+
+.grok-rand-btn {
+  padding: 4px 8px;
+}
+
+.grok-status.error {
+  color: #c0392b;
+}
+
 .examples {
   overflow-y: auto;
   flex: 1;

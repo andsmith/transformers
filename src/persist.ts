@@ -27,6 +27,11 @@ export interface ExperimentConfig {
   fixedLength: boolean;
   /** Added 0.0.32; older saves default to true (the prior behavior). */
   uniformLen?: boolean;
+  /** Added 0.0.36 (parens options + grokking); older saves use defaults. */
+  parensMaxDepth?: number;
+  parensNoMixedNesting?: boolean;
+  grokFilters?: string;
+  enumCap?: number;
   seed: number;
   randomSeed: boolean;
   /** Legacy fields (pre-0.0.23 fixed-train-set saves), used for migration. */
@@ -64,6 +69,10 @@ export function buildSave(state: AppState, opts: SaveOptions): SaveFile {
     maxSeqLen: state.maxSeqLen,
     fixedLength: state.fixedLength,
     uniformLen: state.uniformLen,
+    parensMaxDepth: state.parensMaxDepth,
+    parensNoMixedNesting: state.parensNoMixedNesting,
+    grokFilters: state.grokFilters,
+    enumCap: state.enumCap,
     seed: state.seed,
     randomSeed: state.randomSeed,
   };
@@ -127,6 +136,10 @@ export function applySave(
   state.maxSeqLen = e.maxSeqLen;
   state.fixedLength = e.fixedLength;
   state.uniformLen = e.uniformLen ?? true;
+  state.parensMaxDepth = e.parensMaxDepth ?? Math.max(1, Math.floor(e.maxSeqLen / 2));
+  state.parensNoMixedNesting = e.parensNoMixedNesting ?? false;
+  state.grokFilters = e.grokFilters ?? "";
+  state.enumCap = e.enumCap ?? 1_000_000;
   state.seed = e.seed;
   // Force deterministic mode so the loaded seed is actually used (and the
   // "random" box reflects it) — otherwise the next Regenerate would discard it.

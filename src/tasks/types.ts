@@ -39,9 +39,18 @@ export interface Dataset {
   /** Length prior: true = each length equally likely; false = length ∝ V^L
    *  (uniform over the whole sample space). */
   uniformLen: boolean;
+  /** Parens: max nesting depth; ignored by other tasks. */
+  parensMaxDepth: number;
+  /** Parens: forbid mixing delimiter types within a nest. */
+  parensNoMixedNesting: boolean;
+  /** Grok filters (compiled); empty = no held-out subset. A training draw is
+   *  rejected if it matches any of these. */
+  filters: RegExp[];
   test: Example[];
   /** sampleKey(input) of every test example, for rejection sampling. */
   testKeys: Set<string>;
+  /** Grok match statistics (only when filters are set). */
+  matchInfo?: { count: number; mode: "enumerated" | "sampled" };
 }
 
 export const TASK_SPECS: Record<Task, TaskSpec> = {

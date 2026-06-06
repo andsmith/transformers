@@ -5,6 +5,7 @@
  */
 
 import { generateTestSet, mulberry32, sampleSpaceSize, SPACE_HUGE } from "./tasks/datasets";
+import { compileFilters } from "./tasks/grok";
 import type { Dataset, Task } from "./tasks/types";
 import type { PEScheme } from "./model/embeddings";
 import { TransformerModel } from "./model/transformer";
@@ -44,6 +45,12 @@ export interface AppState {
   maxSeqLen: number; // longest generated sequence
   fixedLength: boolean; // if true, every sequence is exactly maxSeqLen
   uniformLen: boolean; // length prior: equal-per-length vs ∝ V^L
+  // --- task-dependent generation options ---
+  parensMaxDepth: number; // parens: max nesting depth
+  parensNoMixedNesting: boolean; // parens: no mixed delimiter types per nest
+  // --- grokking ---
+  grokFilters: string; // comma-separated regexes; held-out subset
+  enumCap: number; // enumerate the space when ≤ this, else sample
   seed: number;
   randomSeed: boolean; // Regenerate draws a fresh random seed each time
   dataset: Dataset;
@@ -108,6 +115,10 @@ export interface Defaults {
   maxSeqLen: number;
   fixedLength: boolean;
   uniformLen: boolean;
+  parensMaxDepth: number;
+  parensNoMixedNesting: boolean;
+  grokFilters: string;
+  enumCap: number;
 }
 
 const DEFAULTS: Defaults = {
@@ -123,7 +134,16 @@ const DEFAULTS: Defaults = {
   maxSeqLen: 7,
   fixedLength: false,
   uniformLen: true,
+  parensMaxDepth: 3,
+  parensNoMixedNesting: false,
+  grokFilters: "",
+  enumCap: 1_000_000,
 };
+
+/** Theoretical max nesting depth at a given max sequence length. */
+export function maxNestingDepth(maxSeqLen: number): number {
+  return Math.max(1, Math.floor(maxSeqLen / 2));
+}
 
 export interface GenStateSlice {
   task: Task;
@@ -133,6 +153,10 @@ export interface GenStateSlice {
   maxSeqLen: number;
   fixedLength: boolean;
   uniformLen: boolean;
+  parensMaxDepth: number;
+  parensNoMixedNesting: boolean;
+  grokFilters: string;
+  enumCap: number;
   seed: number;
 }
 
@@ -167,6 +191,7 @@ export function testSetMax(s: {
 export function rebuildDataset(state: GenStateSlice): Dataset {
   const maxLen = state.maxSeqLen;
   const minLen = state.fixedLength ? maxLen : Math.min(state.minSeqLen, maxLen);
+  const { regexes } = compileFilters(state.grokFilters);
   return generateTestSet({
     task: state.task,
     vocabSize: state.numSymbols,
@@ -175,6 +200,10 @@ export function rebuildDataset(state: GenStateSlice): Dataset {
     minLen,
     maxLen,
     uniformLen: state.uniformLen,
+    parensMaxDepth: state.parensMaxDepth,
+    parensNoMixedNesting: state.parensNoMixedNesting,
+    filters: regexes,
+    enumCap: state.enumCap,
   });
 }
 

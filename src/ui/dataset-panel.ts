@@ -7,11 +7,12 @@
  */
 
 import type { AppContext, DisplayMode } from "../state";
-import { testSetMax, TRAIN_PER_EPOCH_MAX } from "../state";
+import { maxNestingDepth, testSetMax, TRAIN_PER_EPOCH_MAX } from "../state";
 import type { Example } from "../tasks/types";
 import { isClassification } from "../tasks/types";
 import type { TestEval } from "../training/loop";
 import { MAX_SEQ_LEN_LIMIT, sampleSpaceSize, SPACE_HUGE } from "../tasks/datasets";
+import { compileFilters, randomRegexes } from "../tasks/grok";
 import { tokenChar, tokenColor, MAX_VOCAB } from "../tasks/grammar";
 import {
   makeButton,
@@ -21,11 +22,13 @@ import {
   makeRadioGroup,
   makeRangeSlider,
   makeSlider,
+  makeTextInput,
   type Checkbox,
   type NumberInput,
   type RadioGroup,
   type RangeSlider,
   type Slider,
+  type TextInput,
 } from "./controls";
 import type { PanelHandle } from "./top-panel";
 
@@ -100,6 +103,31 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
   uniformLenCheck.el.title =
     "On: every length equally likely (short sequences over-represented). " +
     "Off: length ∝ |V|^L — uniform over the whole sample space.";
+
+  // --- task-dependent options (only parens for now) ---
+  const depthSlider: Slider = makeSlider({
+    label: "Max nesting depth",
+    min: 1,
+    max: maxNestingDepth(ctx.state.maxSeqLen),
+    step: 1,
+    inline: true,
+    value: ctx.state.parensMaxDepth,
+    onInput: (v) => ctx.apply({ parensMaxDepth: v }),
+  });
+  const noMixedCheck: Checkbox = makeCheckbox(
+    "No mixed nesting",
+    ctx.state.parensNoMixedNesting,
+    (c) => ctx.apply({ parensNoMixedNesting: c }),
+  );
+  noMixedCheck.el.title =
+    "Forbid mixing delimiter types within a nest (e.g. no '[()]', but '(())[[]]' is fine)";
+  const parensOptions = makeFieldset("Parens Options");
+  parensOptions.classList.add("task-options");
+  const parensRow = document.createElement("div");
+  parensRow.className = "control-pair";
+  parensRow.append(depthSlider.el, noMixedCheck.el);
+  parensOptions.append(parensRow);
+
   // On-the-fly training: how many fresh samples make up one epoch.
   const trainSlider: Slider = makeSlider({
     label: "Train samples/epoch",
@@ -140,14 +168,68 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
   regenRow.className = "regen-row";
   regenRow.append(regenBtn, seedInput.el, randomCheck.el);
 
-  // --- two sub-boxes: Generation (resets training) | Size (does not) ---
+  // --- grokking: held-out subset by regex over the vocab glyphs ---
+  const grokInput: TextInput = makeTextInput(
+    ctx.state.grokFilters,
+    "regexes, comma-separated (e.g. aa, ^a.*b$)",
+    (v) => ctx.apply({ grokFilters: v }),
+  );
+  grokInput.el.classList.add("grok-input");
+  const grokRandomBtn = makeButton("🎲", () => {
+    const r = randomRegexes(ctx.state.task, ctx.state.numSymbols);
+    grokInput.set(r);
+    ctx.apply({ grokFilters: r });
+  });
+  grokRandomBtn.classList.add("btn-compact", "grok-rand-btn");
+  grokRandomBtn.title = "Generate a random set of filters";
+  const grokRow = document.createElement("div");
+  grokRow.className = "labeled";
+  const grokCap = document.createElement("div");
+  grokCap.className = "caption";
+  grokCap.textContent = "Grok Filters (held out from training)";
+  const grokInputRow = document.createElement("div");
+  grokInputRow.className = "grok-row";
+  grokInputRow.append(grokInput.el, grokRandomBtn);
+  grokRow.append(grokCap, grokInputRow);
+
+  // Enumeration cap (applies on Regenerate / any generation change).
+  const capSlider: Slider = makeSlider({
+    label: "Enum. cap",
+    min: 4,
+    max: 6.7,
+    step: 0.1,
+    inline: true,
+    value: Math.log10(ctx.state.enumCap),
+    format: (v) => {
+      const n = Math.round(Math.pow(10, v));
+      return n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : `${Math.round(n / 1000)}k`;
+    },
+    onInput: (v) => ctx.apply({ enumCap: Math.round(Math.pow(10, v)) }),
+  });
+  capSlider.el.title =
+    "Grok test set: enumerate the space when its size ≤ this, else random-sample. " +
+    "Higher = exact for bigger spaces but slower on Regenerate.";
+
+  const grokStatus = document.createElement("div");
+  grokStatus.className = "control-note grok-status";
+
+  // --- sub-boxes: Generation (resets training) | Size (does not) ---
   const genBox = makeFieldset("Dataset Generation");
   genBox.classList.add("sub-box");
-  genBox.append(displayRadios.el, vocabRow, lenRow, uniformLenCheck.el);
+  genBox.append(displayRadios.el, vocabRow, lenRow, parensOptions);
 
   const sizeBox = makeFieldset("Dataset Size");
   sizeBox.classList.add("sub-box");
-  sizeBox.append(trainSlider.el, testSlider.el, spaceHint, regenRow);
+  sizeBox.append(
+    uniformLenCheck.el,
+    trainSlider.el,
+    testSlider.el,
+    spaceHint,
+    regenRow,
+    grokRow,
+    capSlider.el,
+    grokStatus,
+  );
 
   // --- Test Set box (its own sub-box, fills the remaining panel height) ---
   // View state (panel-local).
@@ -255,11 +337,22 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
     return row;
   }
 
-  /** Re-render the vocabulary preview (all token ids, current display mode). */
+  /** Re-render the vocabulary preview; tokens are click-to-copy (so the
+   *  bracket glyphs can be pasted into a grok filter). */
   function renderVocab(): void {
+    const s = ctx.state;
     vocabTokens.innerHTML = "";
-    for (let id = 0; id < ctx.state.numSymbols; id++) {
-      vocabTokens.appendChild(renderToken(id));
+    for (let id = 0; id < s.numSymbols; id++) {
+      const el = renderToken(id);
+      const ch = tokenChar(s.task, id, s.numSymbols);
+      el.classList.add("copyable");
+      el.title = `Click to copy "${ch}"`;
+      el.addEventListener("click", () => {
+        navigator.clipboard?.writeText(ch);
+        el.classList.add("copied");
+        window.setTimeout(() => el.classList.remove("copied"), 500);
+      });
+      vocabTokens.appendChild(el);
     }
   }
 
@@ -379,6 +472,33 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
     fixedLenCheck.set(s.fixedLength);
     uniformLenCheck.set(s.uniformLen);
     trainSlider.set(s.trainPerEpoch);
+
+    // Parens options: visible only for the parens task; depth max follows length.
+    parensOptions.style.display = s.task === "parens" ? "" : "none";
+    depthSlider.setMax(maxNestingDepth(s.maxSeqLen));
+    depthSlider.set(s.parensMaxDepth);
+    noMixedCheck.set(s.parensNoMixedNesting);
+
+    // Grok controls + status.
+    grokInput.set(s.grokFilters);
+    capSlider.set(Math.log10(s.enumCap));
+    const { errors } = compileFilters(s.grokFilters);
+    const mi = s.dataset.matchInfo;
+    if (errors.length > 0) {
+      grokStatus.textContent = `regex error: ${errors[0]}`;
+      grokStatus.classList.add("error");
+    } else {
+      grokStatus.classList.remove("error");
+      if (!s.grokFilters.trim()) {
+        grokStatus.textContent = "";
+      } else if (mi?.mode === "enumerated") {
+        grokStatus.textContent = `${mi.count} matching samples (enumerated)`;
+      } else if (mi?.mode === "sampled") {
+        grokStatus.textContent = `~${mi.count} sampled (space > cap)`;
+      } else {
+        grokStatus.textContent = "";
+      }
+    }
 
     // Dynamic test-set cap: 20% of the theoretical sample space (≤500).
     const maxTest = testSetMax(s);

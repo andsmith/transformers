@@ -301,6 +301,33 @@ export function makeNumberInput(
   };
 }
 
+export interface TextInput {
+  el: HTMLInputElement;
+  set(value: string): void;
+}
+
+/** A free-text input that reports on commit (blur/Enter), not per keystroke. */
+export function makeTextInput(
+  value: string,
+  placeholder: string,
+  onChange: (value: string) => void,
+): TextInput {
+  const el = document.createElement("input");
+  el.type = "text";
+  el.className = "text-input";
+  el.value = value;
+  el.placeholder = placeholder;
+  el.spellcheck = false;
+  el.addEventListener("change", () => onChange(el.value));
+  return {
+    el,
+    set(v: string) {
+      if (document.activeElement === el) return;
+      el.value = v;
+    },
+  };
+}
+
 export interface DropdownOption<T extends string> {
   value: T;
   label: string;
