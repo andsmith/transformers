@@ -50,7 +50,6 @@ export interface AppState {
   parensNoMixedNesting: boolean; // parens: no mixed delimiter types per nest
   // --- grokking ---
   grokFilters: string; // comma-separated regexes; held-out subset
-  enumCap: number; // enumerate the space when ≤ this, else sample
   seed: number;
   randomSeed: boolean; // Regenerate draws a fresh random seed each time
   dataset: Dataset;
@@ -118,7 +117,6 @@ export interface Defaults {
   parensMaxDepth: number;
   parensNoMixedNesting: boolean;
   grokFilters: string;
-  enumCap: number;
 }
 
 const DEFAULTS: Defaults = {
@@ -137,7 +135,6 @@ const DEFAULTS: Defaults = {
   parensMaxDepth: 3,
   parensNoMixedNesting: false,
   grokFilters: "",
-  enumCap: 1_000_000,
 };
 
 /** Theoretical max nesting depth at a given max sequence length. */
@@ -156,7 +153,6 @@ export interface GenStateSlice {
   parensMaxDepth: number;
   parensNoMixedNesting: boolean;
   grokFilters: string;
-  enumCap: number;
   seed: number;
 }
 
@@ -203,7 +199,6 @@ export function rebuildDataset(state: GenStateSlice): Dataset {
     parensMaxDepth: state.parensMaxDepth,
     parensNoMixedNesting: state.parensNoMixedNesting,
     filters: regexes,
-    enumCap: state.enumCap,
   });
 }
 

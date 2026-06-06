@@ -31,6 +31,7 @@ export interface ExperimentConfig {
   parensMaxDepth?: number;
   parensNoMixedNesting?: boolean;
   grokFilters?: string;
+  /** Removed in 0.0.37 (auto-decided); ignored if present in old saves. */
   enumCap?: number;
   seed: number;
   randomSeed: boolean;
@@ -72,7 +73,6 @@ export function buildSave(state: AppState, opts: SaveOptions): SaveFile {
     parensMaxDepth: state.parensMaxDepth,
     parensNoMixedNesting: state.parensNoMixedNesting,
     grokFilters: state.grokFilters,
-    enumCap: state.enumCap,
     seed: state.seed,
     randomSeed: state.randomSeed,
   };
@@ -139,7 +139,6 @@ export function applySave(
   state.parensMaxDepth = e.parensMaxDepth ?? Math.max(1, Math.floor(e.maxSeqLen / 2));
   state.parensNoMixedNesting = e.parensNoMixedNesting ?? false;
   state.grokFilters = e.grokFilters ?? "";
-  state.enumCap = e.enumCap ?? 1_000_000;
   state.seed = e.seed;
   // Force deterministic mode so the loaded seed is actually used (and the
   // "random" box reflects it) — otherwise the next Regenerate would discard it.

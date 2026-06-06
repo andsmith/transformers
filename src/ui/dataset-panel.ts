@@ -175,6 +175,12 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
     (v) => ctx.apply({ grokFilters: v }),
   );
   grokInput.el.classList.add("grok-input");
+  const grokClearBtn = makeButton("✕", () => {
+    grokInput.set("");
+    ctx.apply({ grokFilters: "" });
+  });
+  grokClearBtn.classList.add("btn-compact", "grok-clear-btn");
+  grokClearBtn.title = "Clear the grok filters";
   const grokRandomBtn = makeButton("🎲", () => {
     const r = randomRegexes(ctx.state.task, ctx.state.numSymbols);
     grokInput.set(r);
@@ -189,26 +195,8 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
   grokCap.textContent = "Grok Filters (held out from training)";
   const grokInputRow = document.createElement("div");
   grokInputRow.className = "grok-row";
-  grokInputRow.append(grokInput.el, grokRandomBtn);
+  grokInputRow.append(grokClearBtn, grokInput.el, grokRandomBtn);
   grokRow.append(grokCap, grokInputRow);
-
-  // Enumeration cap (applies on Regenerate / any generation change).
-  const capSlider: Slider = makeSlider({
-    label: "Enum. cap",
-    min: 4,
-    max: 6.7,
-    step: 0.1,
-    inline: true,
-    value: Math.log10(ctx.state.enumCap),
-    format: (v) => {
-      const n = Math.round(Math.pow(10, v));
-      return n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : `${Math.round(n / 1000)}k`;
-    },
-    onInput: (v) => ctx.apply({ enumCap: Math.round(Math.pow(10, v)) }),
-  });
-  capSlider.el.title =
-    "Grok test set: enumerate the space when its size ≤ this, else random-sample. " +
-    "Higher = exact for bigger spaces but slower on Regenerate.";
 
   const grokStatus = document.createElement("div");
   grokStatus.className = "control-note grok-status";
@@ -227,7 +215,6 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
     spaceHint,
     regenRow,
     grokRow,
-    capSlider.el,
     grokStatus,
   );
 
@@ -481,7 +468,6 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
 
     // Grok controls + status.
     grokInput.set(s.grokFilters);
-    capSlider.set(Math.log10(s.enumCap));
     const { errors } = compileFilters(s.grokFilters);
     const mi = s.dataset.matchInfo;
     if (errors.length > 0) {
@@ -494,7 +480,7 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
       } else if (mi?.mode === "enumerated") {
         grokStatus.textContent = `${mi.count} matching samples (enumerated)`;
       } else if (mi?.mode === "sampled") {
-        grokStatus.textContent = `~${mi.count} sampled (space > cap)`;
+        grokStatus.textContent = `~${mi.count} matching (sampled — space too large to enumerate)`;
       } else {
         grokStatus.textContent = "";
       }

@@ -45,19 +45,12 @@ export function matchesAny(regexes: RegExp[], str: string): boolean {
   return false;
 }
 
-export interface MatchEnumeration {
-  /** Keys (sampleKey form) of every matching input. */
-  keys: string[];
-  count: number;
-  mode: "enumerated" | "sampled";
-}
-
 /**
- * Enumerate the whole input space and keep the strings matching any filter,
- * when the space is small enough (`space ≤ cap`). Cost depends on space size,
- * not on how rare matches are — so even a maximally constrained filter is
- * found instantly. Returns `mode:"sampled"` (empty) when the space exceeds the
- * cap; the caller falls back to rejection sampling.
+ * Enumerate the whole input space and return the keys (sampleKey form) of
+ * every string matching any filter. Cost depends on space size, not on how
+ * rare matches are — so even a maximally constrained filter is found
+ * instantly. The caller decides when enumeration is the right move (see
+ * generateTestSet's enumerate-vs-sample heuristic).
  */
 export function enumerateMatches(
   task: Task,
@@ -65,14 +58,7 @@ export function enumerateMatches(
   minLen: number,
   maxLen: number,
   regexes: RegExp[],
-  cap: number,
-): MatchEnumeration {
-  let space = 0;
-  for (let L = minLen; L <= maxLen; L++) {
-    space += Math.pow(vocabSize, L);
-    if (space > cap) return { keys: [], count: 0, mode: "sampled" };
-  }
-
+): string[] {
   const glyph: string[] = [];
   for (let d = 0; d < vocabSize; d++) glyph.push(tokenChar(task, d, vocabSize));
 
@@ -92,7 +78,7 @@ export function enumerateMatches(
       if (i < 0) break;
     }
   }
-  return { keys, count: keys.length, mode: "enumerated" };
+  return keys;
 }
 
 // --- random regex generator (the 🎲 button) ---

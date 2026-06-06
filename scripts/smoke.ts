@@ -21,7 +21,7 @@ import { TrainingLoop, PIPELINE_STAGES } from "../src/training/loop";
 import { Rng } from "../src/util/rng";
 
 const TRAIN_PER_EPOCH = 48;
-const GEN = { parensMaxDepth: 3, parensNoMixedNesting: false, filters: [], enumCap: 1e6 };
+const GEN = { parensMaxDepth: 3, parensNoMixedNesting: false, filters: [] };
 
 function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
   const dataset = generateTestSet({
@@ -291,9 +291,8 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
   // ^a(.)\1b$ over |V|=3, length exactly 4: matches a X X b for X in {a,b,c} = 3.
   const { regexes, errors } = compileFilters("^a(.)\\1b$");
   if (errors.length) throw new Error("filter should compile");
-  const en = enumerateMatches("copy", 3, 4, 4, regexes, 1e6);
-  if (en.mode !== "enumerated") throw new Error("space should be enumerable");
-  if (en.count !== 3) throw new Error(`backref match count should be 3, got ${en.count}`);
+  const en = enumerateMatches("copy", 3, 4, 4, regexes);
+  if (en.length !== 3) throw new Error(`backref match count should be 3, got ${en.length}`);
 
   const ds = generateTestSet({
     task: "copy",
@@ -306,7 +305,6 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
     parensMaxDepth: 2,
     parensNoMixedNesting: false,
     filters: regexes,
-    enumCap: 1e6,
   });
   if (ds.test.length !== 3) throw new Error(`test set should be the 3 matches, got ${ds.test.length}`);
   if (ds.matchInfo?.mode !== "enumerated" || ds.matchInfo.count !== 3) {
@@ -323,9 +321,9 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
   console.log("grok: enumerate(^a(.)\\1b$)=3, test=matches, training holds them out OK");
 }
 
-// --- 6b. grok sampling fallback when space exceeds the cap ---
+// --- 6b. grok auto-decision: common filter → sampling, all matches valid ---
 {
-  const { regexes } = compileFilters("aa"); // common -> sampling can find it
+  const { regexes } = compileFilters("aa"); // common; sampling is the cheaper path
   const ds = generateTestSet({
     task: "copy",
     vocabSize: 6,
@@ -337,15 +335,14 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
     parensMaxDepth: 3,
     parensNoMixedNesting: false,
     filters: regexes,
-    enumCap: 1000, // far below the space -> forces sampling
   });
-  if (ds.matchInfo?.mode !== "sampled") throw new Error("should fall back to sampling");
+  if (ds.matchInfo?.mode !== "sampled") throw new Error("common filter should auto-sample");
   for (const ex of ds.test) {
     if (!matchesAny(regexes, inputToGlyphs("copy", 6, ex.input))) {
-      throw new Error("sampled test sample does not match the filter");
+      throw new Error("test sample does not match the filter");
     }
   }
-  console.log(`grok sampling fallback: ${ds.test.length} matching samples OK`);
+  console.log(`grok auto-decision: common filter → ${ds.matchInfo.mode}, ${ds.test.length} matches OK`);
 }
 
 // --- 7. parens options: nesting depth + no mixed nesting respected ---
@@ -363,7 +360,6 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
     parensMaxDepth: 2,
     parensNoMixedNesting: true,
     filters: [],
-    enumCap: 1e6,
   });
   // We can't easily recover roles here, but depth/mixing are structural: just
   // confirm generation produced a non-trivial, varied test set without error.

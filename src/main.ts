@@ -64,12 +64,15 @@ window.addEventListener("DOMContentLoaded", () => {
 
   // --- grid scaffold ---
   root.classList.add("grid");
-  // Left column: Run panel stacked above the dataset panel.
+  // Left column: Run panel above the dataset panel, with a draggable divider.
   const leftHost = document.createElement("div");
   leftHost.className = "left-col";
   const runHost = document.createElement("div");
   const datasetHost = document.createElement("div");
-  leftHost.append(runHost, datasetHost);
+  const leftSplitter = document.createElement("div");
+  leftSplitter.className = "left-splitter";
+  leftHost.append(runHost, leftSplitter, datasetHost);
+  mountLeftSplitter(leftHost, runHost, leftSplitter);
 
   const topHost = section("top");
   const centerHost = section("center");
@@ -89,6 +92,40 @@ window.addEventListener("DOMContentLoaded", () => {
     el.style.gridArea = area;
     el.dataset.area = area;
     return el;
+  }
+
+  /** Drag the divider between the Run and Dataset frames to resize them. */
+  function mountLeftSplitter(col: HTMLElement, run: HTMLElement, handle: HTMLElement): void {
+    let active = false;
+    let startY = 0;
+    let startH = 0;
+    handle.addEventListener("pointerdown", (e) => {
+      active = true;
+      startY = e.clientY;
+      startH = run.offsetHeight;
+      handle.setPointerCapture(e.pointerId);
+      handle.classList.add("dragging");
+      document.body.classList.add("resizing");
+      e.preventDefault();
+    });
+    handle.addEventListener("pointermove", (e) => {
+      if (!active) return;
+      const h = Math.max(
+        60,
+        Math.min(col.clientHeight - 120, startH + (e.clientY - startY)),
+      );
+      run.style.flex = "0 0 auto";
+      run.style.height = `${h}px`;
+    });
+    const end = (e: PointerEvent) => {
+      if (!active) return;
+      active = false;
+      handle.releasePointerCapture?.(e.pointerId);
+      handle.classList.remove("dragging");
+      document.body.classList.remove("resizing");
+    };
+    handle.addEventListener("pointerup", end);
+    handle.addEventListener("pointercancel", end);
   }
 
   const state = createInitialState();

@@ -63,6 +63,33 @@ body {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
+  overflow: auto; /* scroll if dragged shorter than its content */
+}
+
+/* Draggable divider between the Run and Dataset frames. */
+.left-splitter {
+  flex: 0 0 auto;
+  height: 8px;
+  cursor: row-resize;
+  position: relative;
+}
+
+.left-splitter::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 40px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--line);
+  transition: background 0.12s;
+}
+
+.left-splitter:hover::after,
+.left-splitter.dragging::after {
+  background: var(--accent);
 }
 
 .run-title-row {
@@ -755,8 +782,15 @@ body.resizing {
   font-size: calc(var(--ui-font-px) - 1px);
 }
 
-.grok-rand-btn {
+.grok-rand-btn,
+.grok-clear-btn {
   padding: 4px 8px;
+}
+
+.grok-clear-btn {
+  background: #fff;
+  color: var(--muted);
+  border-color: var(--line);
 }
 
 .grok-status.error {

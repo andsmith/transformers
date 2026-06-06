@@ -212,9 +212,10 @@ export interface TestSetOptions extends GenConfig {
   seed: number;
   /** Compiled grok filters; empty = ordinary (non-grok) test set. */
   filters: RegExp[];
-  /** Enumerate the space when its size ≤ this; else sample. */
-  enumCap: number;
 }
+
+/** Hard ceiling on enumeration so a giant space can never freeze the UI. */
+const ENUM_HARD_CAP = 4_000_000;
 
 function shuffleInPlace<T>(rng: () => number, a: T[]): void {
   for (let i = a.length - 1; i > 0; i--) {
@@ -229,7 +230,7 @@ function shuffleInPlace<T>(rng: () => number, a: T[]): void {
  * exact (enumerated) when the space ≤ enumCap, else rejection-sampled.
  */
 export function generateTestSet(opts: TestSetOptions): Dataset {
-  const { task, vocabSize, count, seed, uniformLen, filters, enumCap } = opts;
+  const { task, vocabSize, count, seed, uniformLen, filters } = opts;
   const minLen = Math.min(opts.minLen, opts.maxLen);
   const maxLen = opts.maxLen;
   const cfg: GenConfig = {
@@ -255,13 +256,31 @@ export function generateTestSet(opts: TestSetOptions): Dataset {
   };
 
   if (filters.length > 0) {
-    const en = enumerateMatches(task, vocabSize, minLen, maxLen, filters, enumCap);
-    if (en.mode === "enumerated") {
-      shuffleInPlace(rng, en.keys);
-      for (let i = 0; i < Math.min(count, en.keys.length); i++) pushKey(en.keys[i]);
-      matchInfo = { count: en.count, mode: "enumerated" };
+    // Decide enumerate vs sample by estimating which is cheaper. Enumeration
+    // cost ≈ the space size; sampling cost ≈ draws needed = count / matchRate,
+    // which we estimate from a quick probe. Enumeration is also the only way
+    // to find matches when they're extremely rare (probe rate ≈ 0).
+    const space = sampleSpaceSize(vocabSize, minLen, maxLen, false);
+    const canEnumerate = space <= ENUM_HARD_CAP;
+
+    const probeN = 2000;
+    let probeHits = 0;
+    for (let i = 0; i < probeN; i++) {
+      const ex = generateOne(rng, cfg, roles);
+      if (matchesAny(filters, inputToGlyphs(task, vocabSize, ex.input))) probeHits++;
+    }
+    const rate = probeHits / probeN;
+    // ~3x safety for dedup + variance; Infinity when the probe found nothing.
+    const estSampleDraws = rate > 0 ? (count / rate) * 3 : Infinity;
+
+    if (canEnumerate && space <= estSampleDraws) {
+      const keys = enumerateMatches(task, vocabSize, minLen, maxLen, filters);
+      shuffleInPlace(rng, keys);
+      for (let i = 0; i < Math.min(count, keys.length); i++) pushKey(keys[i]);
+      matchInfo = { count: keys.length, mode: "enumerated" };
     } else {
-      // Space too large to enumerate — rejection-sample matching draws.
+      // Rejection-sample matching draws (bounded; may underfill for a rare
+      // filter in a space too large to enumerate).
       const maxAttempts = Math.max(20000, count * 200);
       let attempts = 0;
       while (test.length < count && attempts < maxAttempts) {
