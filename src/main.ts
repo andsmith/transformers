@@ -83,14 +83,20 @@ window.addEventListener("DOMContentLoaded", () => {
 
   const topHost = section("top");
   const centerHost = section("center");
-  // Bottom row: Status | History | Loss.
+  // Bottom row: Status | History | Loss, with draggable vertical dividers.
   const bottomHost = section("loss");
   bottomHost.className = "bottom-row";
   const statusHost = document.createElement("div");
   const historyHost = document.createElement("div");
   const lossHost = document.createElement("div");
   lossHost.className = "loss-host";
-  bottomHost.append(statusHost, historyHost, lossHost);
+  const vsplit1 = document.createElement("div");
+  const vsplit2 = document.createElement("div");
+  vsplit1.className = "bottom-splitter";
+  vsplit2.className = "bottom-splitter";
+  bottomHost.append(statusHost, vsplit1, historyHost, vsplit2, lossHost);
+  mountBottomSplitter(bottomHost, statusHost, vsplit1);
+  mountBottomSplitter(bottomHost, historyHost, vsplit2);
   root.append(leftHost, topHost, centerHost, bottomHost);
   mountSplitters(root);
 
@@ -135,6 +141,41 @@ window.addEventListener("DOMContentLoaded", () => {
     handle.addEventListener("pointercancel", end);
   }
 
+  /** Drag a vertical divider to resize the panel to its left (bottom row). */
+  function mountBottomSplitter(row: HTMLElement, panel: HTMLElement, handle: HTMLElement): void {
+    let active = false;
+    let startX = 0;
+    let startW = 0;
+    handle.addEventListener("pointerdown", (e) => {
+      active = true;
+      startX = e.clientX;
+      startW = panel.offsetWidth;
+      handle.setPointerCapture(e.pointerId);
+      handle.classList.add("dragging");
+      document.body.classList.add("resizing");
+      e.preventDefault();
+    });
+    handle.addEventListener("pointermove", (e) => {
+      if (!active) return;
+      const w = Math.max(
+        80,
+        Math.min(row.clientWidth - 220, startW + (e.clientX - startX)),
+      );
+      panel.style.flex = "0 0 auto";
+      panel.style.width = `${w}px`;
+      panel.style.aspectRatio = "auto"; // history panel: free width/height
+    });
+    const end = (e: PointerEvent) => {
+      if (!active) return;
+      active = false;
+      handle.releasePointerCapture?.(e.pointerId);
+      handle.classList.remove("dragging");
+      document.body.classList.remove("resizing");
+    };
+    handle.addEventListener("pointerup", end);
+    handle.addEventListener("pointercancel", end);
+  }
+
   const state = createInitialState();
 
   let top: PanelHandle;
@@ -153,9 +194,12 @@ window.addEventListener("DOMContentLoaded", () => {
     run.update();
     status.update();
     history.update();
-    // Collapsing the loss row hides its companions too.
-    statusHost.style.display = state.lossCollapsed ? "none" : "";
-    historyHost.style.display = state.lossCollapsed ? "none" : "";
+    // Collapsing the loss row hides its companions (and their dividers) too.
+    const hide = state.lossCollapsed ? "none" : "";
+    statusHost.style.display = hide;
+    historyHost.style.display = hide;
+    vsplit1.style.display = hide;
+    vsplit2.style.display = hide;
   }
 
   function doRebuild(): void {

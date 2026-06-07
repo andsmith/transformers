@@ -942,6 +942,33 @@ body.resizing {
   min-width: 0;
 }
 
+/* Draggable vertical divider between the bottom-row panels. */
+.bottom-splitter {
+  flex: 0 0 auto;
+  width: 8px;
+  align-self: stretch;
+  cursor: col-resize;
+  position: relative;
+}
+
+.bottom-splitter::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 3px;
+  height: 40px;
+  border-radius: 2px;
+  background: var(--line);
+  transition: background 0.12s;
+}
+
+.bottom-splitter:hover::after,
+.bottom-splitter.dragging::after {
+  background: var(--accent);
+}
+
 .status-panel {
   flex: none;
   width: 260px;
