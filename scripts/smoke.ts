@@ -21,7 +21,7 @@ import { TrainingLoop, PIPELINE_STAGES } from "../src/training/loop";
 import { Rng } from "../src/util/rng";
 
 const TRAIN_PER_EPOCH = 48;
-const GEN = { parensMaxDepth: 3, parensNoMixedNesting: false, filters: [] };
+const GEN = { parensMaxDepth: 3, parensNoMixedNesting: false, parensDelims: 1, filters: [] };
 
 function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
   const dataset = generateTestSet({
@@ -291,7 +291,7 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
   // ^a(.)\1b$ over |V|=3, length exactly 4: matches a X X b for X in {a,b,c} = 3.
   const { regexes, errors } = compileFilters("^a(.)\\1b$");
   if (errors.length) throw new Error("filter should compile");
-  const en = enumerateMatches("copy", 3, 4, 4, regexes);
+  const en = enumerateMatches("copy", 3, 4, 4, regexes, 1);
   if (en.length !== 3) throw new Error(`backref match count should be 3, got ${en.length}`);
 
   const ds = generateTestSet({
@@ -304,6 +304,7 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
     uniformLen: true,
     parensMaxDepth: 2,
     parensNoMixedNesting: false,
+    parensDelims: 1,
     filters: regexes,
   });
   if (ds.test.length !== 3) throw new Error(`test set should be the 3 matches, got ${ds.test.length}`);
@@ -314,7 +315,7 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
   const rng = new Rng(31);
   for (let i = 0; i < 500; i++) {
     const ex = generateTrainExample(ds, rng, i);
-    if (matchesAny(regexes, inputToGlyphs("copy", 3, ex.input))) {
+    if (matchesAny(regexes, inputToGlyphs("copy", 3, ex.input, 1))) {
       throw new Error(`train sample ${i} matches a grok filter`);
     }
   }
@@ -334,11 +335,12 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
     uniformLen: true,
     parensMaxDepth: 3,
     parensNoMixedNesting: false,
+    parensDelims: 1,
     filters: regexes,
   });
   if (ds.matchInfo?.mode !== "sampled") throw new Error("common filter should auto-sample");
   for (const ex of ds.test) {
-    if (!matchesAny(regexes, inputToGlyphs("copy", 6, ex.input))) {
+    if (!matchesAny(regexes, inputToGlyphs("copy", 6, ex.input, 1))) {
       throw new Error("test sample does not match the filter");
     }
   }
@@ -359,6 +361,7 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
     uniformLen: true,
     parensMaxDepth: 2,
     parensNoMixedNesting: true,
+    parensDelims: 2,
     filters: [],
   });
   // We can't easily recover roles here, but depth/mixing are structural: just

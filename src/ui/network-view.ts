@@ -189,7 +189,7 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
         gc.font = `${Math.max(8, Math.min(cw, chh) - 3)}px ui-monospace, monospace`;
         gc.textAlign = "center";
         gc.textBaseline = "middle";
-        gc.fillText(tokenChar(s.task, id, V), x + cw / 2, y + chh / 2);
+        gc.fillText(tokenChar(s.task, id, V, s.parensDelims), x + cw / 2, y + chh / 2);
         gc.textAlign = "left";
         gc.textBaseline = "alphabetic";
       }

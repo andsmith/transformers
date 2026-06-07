@@ -16,6 +16,7 @@ import {
   type AppState,
 } from "./state";
 import { TrainingLoop } from "./training/loop";
+import { maxDelims } from "./tasks/grammar";
 import { Rng } from "./util/rng";
 import { mountTopPanel, type PanelHandle } from "./ui/top-panel";
 import { mountDatasetPanel } from "./ui/dataset-panel";
@@ -41,6 +42,7 @@ const REBUILD_KEYS = new Set<keyof AppState>([
   "uniformLen",
   "parensMaxDepth",
   "parensNoMixedNesting",
+  "parensDelims",
   "grokFilters",
 ]);
 
@@ -218,6 +220,10 @@ window.addEventListener("DOMContentLoaded", () => {
         state.parensMaxDepth = Math.min(
           state.parensMaxDepth,
           maxNestingDepth(state.maxSeqLen),
+        );
+        state.parensDelims = Math.max(
+          1,
+          Math.min(state.parensDelims, maxDelims(state.numSymbols)),
         );
         state.testSetSize = Math.min(state.testSetSize, testSetMax(state));
         state.running = false;

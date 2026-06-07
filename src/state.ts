@@ -48,6 +48,7 @@ export interface AppState {
   // --- task-dependent generation options ---
   parensMaxDepth: number; // parens: max nesting depth
   parensNoMixedNesting: boolean; // parens: no mixed delimiter types per nest
+  parensDelims: number; // parens: number of distinct delimiter pair kinds
   // --- grokking ---
   grokFilters: string; // comma-separated regexes; held-out subset
   seed: number;
@@ -116,6 +117,7 @@ export interface Defaults {
   uniformLen: boolean;
   parensMaxDepth: number;
   parensNoMixedNesting: boolean;
+  parensDelims: number;
   grokFilters: string;
 }
 
@@ -134,6 +136,7 @@ const DEFAULTS: Defaults = {
   uniformLen: true,
   parensMaxDepth: 3,
   parensNoMixedNesting: false,
+  parensDelims: 1,
   grokFilters: "",
 };
 
@@ -152,6 +155,7 @@ export interface GenStateSlice {
   uniformLen: boolean;
   parensMaxDepth: number;
   parensNoMixedNesting: boolean;
+  parensDelims: number;
   grokFilters: string;
   seed: number;
 }
@@ -198,6 +202,7 @@ export function rebuildDataset(state: GenStateSlice): Dataset {
     uniformLen: state.uniformLen,
     parensMaxDepth: state.parensMaxDepth,
     parensNoMixedNesting: state.parensNoMixedNesting,
+    parensDelims: state.parensDelims,
     filters: regexes,
   });
 }

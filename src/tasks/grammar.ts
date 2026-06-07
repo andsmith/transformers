@@ -13,29 +13,30 @@ export const MAX_VOCAB = 10;
 const ALPHABET = "abcdefghij"; // MAX_VOCAB letters
 
 /** Bracket glyphs used when displaying the parens task as characters. */
-const OPEN_GLYPHS = "([{<";
-const CLOSE_GLYPHS = ")]}>";
-const DISTRACTOR_GLYPHS = ".,;:*";
+const OPEN_GLYPHS = "([{<«";
+const CLOSE_GLYPHS = ")]}>»";
+const DISTRACTOR_GLYPHS = ".,;:*+~";
 
-/**
- * Role assignment for the parens task. Token ids are split into matched
- * delimiter pairs followed by distractors. `openIds[k]` is closed by
- * `closeIds[k]`.
- */
-export interface ParensRoles {
-  openIds: number[];
-  closeIds: number[];
-  distractorIds: number[];
+/** Max distinct delimiter pair kinds (limited by available glyph pairs). */
+export const MAX_DELIMS = OPEN_GLYPHS.length; // 5
+
+/** Largest number of delimiter pairs that fits the vocabulary. */
+export function maxDelims(vocabSize: number): number {
+  return Math.max(1, Math.min(MAX_DELIMS, Math.floor(vocabSize / 2)));
+}
+
+/** Default number of delimiter pairs for a vocabulary (≈ a quarter). */
+export function defaultDelims(vocabSize: number): number {
+  return Math.max(1, Math.min(maxDelims(vocabSize), Math.floor(vocabSize / 4) || 1));
 }
 
 /**
- * Assign delimiter/distractor roles for a given vocabulary size. Roughly a
- * quarter of the vocabulary becomes delimiter pairs (at least one), the rest
- * are distractors. Single bracket type for V<=3; more types as V grows.
+ * Role assignment for the parens task. The first `nDelims` pairs of ids are
+ * matched delimiters (open = 2k, close = 2k+1); the rest are distractors.
+ * `openIds[k]` is closed by `closeIds[k]`.
  */
-export function parensRoles(vocabSize: number): ParensRoles {
-  const maxPairsByGlyph = Math.min(OPEN_GLYPHS.length, Math.floor(vocabSize / 2));
-  const pairs = Math.max(1, Math.min(maxPairsByGlyph, Math.floor(vocabSize / 4) || 1));
+export function parensRoles(vocabSize: number, nDelims: number): ParensRoles {
+  const pairs = Math.max(1, Math.min(maxDelims(vocabSize), Math.floor(nDelims)));
   const openIds: number[] = [];
   const closeIds: number[] = [];
   for (let k = 0; k < pairs; k++) {
@@ -47,10 +48,21 @@ export function parensRoles(vocabSize: number): ParensRoles {
   return { openIds, closeIds, distractorIds };
 }
 
+export interface ParensRoles {
+  openIds: number[];
+  closeIds: number[];
+  distractorIds: number[];
+}
+
 /** Display character for a token id under the given task. */
-export function tokenChar(task: Task, id: number, vocabSize: number): string {
+export function tokenChar(
+  task: Task,
+  id: number,
+  vocabSize: number,
+  nDelims: number,
+): string {
   if (task === "parens") {
-    const { openIds, closeIds } = parensRoles(vocabSize);
+    const { openIds, closeIds } = parensRoles(vocabSize, nDelims);
     const oi = openIds.indexOf(id);
     if (oi >= 0) return OPEN_GLYPHS[oi % OPEN_GLYPHS.length];
     const ci = closeIds.indexOf(id);

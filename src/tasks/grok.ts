@@ -12,9 +12,14 @@ import type { Task } from "./types";
 import { tokenChar } from "./grammar";
 
 /** The display string a regex is matched against (the vocab glyphs). */
-export function inputToGlyphs(task: Task, vocabSize: number, ids: number[]): string {
+export function inputToGlyphs(
+  task: Task,
+  vocabSize: number,
+  ids: number[],
+  nDelims: number,
+): string {
   let s = "";
-  for (const id of ids) s += tokenChar(task, id, vocabSize);
+  for (const id of ids) s += tokenChar(task, id, vocabSize, nDelims);
   return s;
 }
 
@@ -58,9 +63,10 @@ export function enumerateMatches(
   minLen: number,
   maxLen: number,
   regexes: RegExp[],
+  nDelims: number,
 ): string[] {
   const glyph: string[] = [];
-  for (let d = 0; d < vocabSize; d++) glyph.push(tokenChar(task, d, vocabSize));
+  for (let d = 0; d < vocabSize; d++) glyph.push(tokenChar(task, d, vocabSize, nDelims));
 
   const keys: string[] = [];
   for (let L = minLen; L <= maxLen; L++) {
@@ -88,9 +94,9 @@ function esc(ch: string): string {
 }
 
 /** Generate 1–3 varied, readable patterns over the current vocabulary glyphs. */
-export function randomRegexes(task: Task, vocabSize: number): string {
+export function randomRegexes(task: Task, vocabSize: number, nDelims: number): string {
   const glyphs: string[] = [];
-  for (let d = 0; d < vocabSize; d++) glyphs.push(esc(tokenChar(task, d, vocabSize)));
+  for (let d = 0; d < vocabSize; d++) glyphs.push(esc(tokenChar(task, d, vocabSize, nDelims)));
   const pick = () => glyphs[Math.floor(Math.random() * glyphs.length)];
 
   const templates: Array<() => string> = [

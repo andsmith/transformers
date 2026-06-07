@@ -43,6 +43,8 @@ export interface Dataset {
   parensMaxDepth: number;
   /** Parens: forbid mixing delimiter types within a nest. */
   parensNoMixedNesting: boolean;
+  /** Parens: number of distinct delimiter pair kinds. */
+  parensDelims: number;
   /** Grok filters (compiled); empty = no held-out subset. A training draw is
    *  rejected if it matches any of these. */
   filters: RegExp[];

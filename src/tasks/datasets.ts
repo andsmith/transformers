@@ -31,6 +31,8 @@ export interface GenConfig {
   parensMaxDepth: number;
   /** Parens: forbid mixing delimiter types within a nest. */
   parensNoMixedNesting: boolean;
+  /** Parens: number of distinct delimiter pair kinds. */
+  parensDelims: number;
 }
 
 /** Identity key for rejection sampling (input determines output). */
@@ -241,9 +243,10 @@ export function generateTestSet(opts: TestSetOptions): Dataset {
     uniformLen,
     parensMaxDepth: opts.parensMaxDepth,
     parensNoMixedNesting: opts.parensNoMixedNesting,
+    parensDelims: opts.parensDelims,
   };
   const rng = mulberry32(seed);
-  const roles = parensRoles(vocabSize);
+  const roles = parensRoles(vocabSize, opts.parensDelims);
 
   const test: Example[] = [];
   const testKeys = new Set<string>();
@@ -267,14 +270,14 @@ export function generateTestSet(opts: TestSetOptions): Dataset {
     let probeHits = 0;
     for (let i = 0; i < probeN; i++) {
       const ex = generateOne(rng, cfg, roles);
-      if (matchesAny(filters, inputToGlyphs(task, vocabSize, ex.input))) probeHits++;
+      if (matchesAny(filters, inputToGlyphs(task, vocabSize, ex.input, opts.parensDelims))) probeHits++;
     }
     const rate = probeHits / probeN;
     // ~3x safety for dedup + variance; Infinity when the probe found nothing.
     const estSampleDraws = rate > 0 ? (count / rate) * 3 : Infinity;
 
     if (canEnumerate && space <= estSampleDraws) {
-      const keys = enumerateMatches(task, vocabSize, minLen, maxLen, filters);
+      const keys = enumerateMatches(task, vocabSize, minLen, maxLen, filters, opts.parensDelims);
       shuffleInPlace(rng, keys);
       for (let i = 0; i < Math.min(count, keys.length); i++) pushKey(keys[i]);
       matchInfo = { count: keys.length, mode: "enumerated" };
@@ -288,7 +291,7 @@ export function generateTestSet(opts: TestSetOptions): Dataset {
         const ex = generateOne(rng, cfg, roles);
         const key = sampleKey(ex.input);
         if (testKeys.has(key)) continue;
-        if (!matchesAny(filters, inputToGlyphs(task, vocabSize, ex.input))) continue;
+        if (!matchesAny(filters, inputToGlyphs(task, vocabSize, ex.input, opts.parensDelims))) continue;
         testKeys.add(key);
         test.push({ index: test.length, ...ex });
       }
@@ -315,6 +318,7 @@ export function generateTestSet(opts: TestSetOptions): Dataset {
     uniformLen,
     parensMaxDepth: opts.parensMaxDepth,
     parensNoMixedNesting: opts.parensNoMixedNesting,
+    parensDelims: opts.parensDelims,
     filters,
     test,
     testKeys,
@@ -337,7 +341,7 @@ export function generateTrainExample(
   displayIndex: number,
   stats?: { rejections: number },
 ): Example {
-  const roles = parensRoles(ds.vocabSize);
+  const roles = parensRoles(ds.vocabSize, ds.parensDelims);
   const r = () => rng.next();
   const cfg: GenConfig = {
     task: ds.task,
@@ -347,11 +351,12 @@ export function generateTrainExample(
     uniformLen: ds.uniformLen,
     parensMaxDepth: ds.parensMaxDepth,
     parensNoMixedNesting: ds.parensNoMixedNesting,
+    parensDelims: ds.parensDelims,
   };
   const heldOut = (input: number[]): boolean =>
     ds.testKeys.has(sampleKey(input)) ||
     (ds.filters.length > 0 &&
-      matchesAny(ds.filters, inputToGlyphs(ds.task, ds.vocabSize, input)));
+      matchesAny(ds.filters, inputToGlyphs(ds.task, ds.vocabSize, input, ds.parensDelims)));
 
   let ex = generateOne(r, cfg, roles);
   let tries = 0;

@@ -14,7 +14,7 @@ import { isClassification } from "../tasks/types";
 import type { TestEval } from "../training/loop";
 import { MAX_SEQ_LEN_LIMIT, sampleSpaceSize, SPACE_HUGE } from "../tasks/datasets";
 import { compileFilters, randomRegexes } from "../tasks/grok";
-import { tokenChar, tokenColor, MAX_VOCAB } from "../tasks/grammar";
+import { tokenChar, tokenColor, MAX_VOCAB, maxDelims } from "../tasks/grammar";
 import {
   makeButton,
   makeCheckbox,
@@ -112,6 +112,19 @@ export function mountDatasetPanel(
     "Off: length ∝ |V|^L — uniform over the whole sample space.";
 
   // --- task-dependent options (only parens for now) ---
+  const delimSlider: Slider = makeSlider({
+    label: "Delimiter kinds",
+    min: 1,
+    max: maxDelims(ctx.state.numSymbols),
+    step: 1,
+    inline: true,
+    value: ctx.state.parensDelims,
+    onInput: (v) => ctx.apply({ parensDelims: v }),
+  });
+  delimSlider.el.title =
+    "Number of distinct matched delimiter pairs (the rest of the vocabulary " +
+    "becomes distractors). Up to 5, limited by ⌊|V|/2⌋.";
+  delimSlider.el.classList.add("narrow");
   const depthSlider: Slider = makeSlider({
     label: "Max nesting depth",
     min: 1,
@@ -121,6 +134,7 @@ export function mountDatasetPanel(
     value: ctx.state.parensMaxDepth,
     onInput: (v) => ctx.apply({ parensMaxDepth: v }),
   });
+  depthSlider.el.classList.add("narrow");
   const noMixedCheck: Checkbox = makeCheckbox(
     "No mixed nesting",
     ctx.state.parensNoMixedNesting,
@@ -130,10 +144,8 @@ export function mountDatasetPanel(
     "Forbid mixing delimiter types within a nest (e.g. no '[()]', but '(())[[]]' is fine)";
   const parensOptions = makeFieldset("Parens Options");
   parensOptions.classList.add("task-options");
-  const parensRow = document.createElement("div");
-  parensRow.className = "control-pair";
-  parensRow.append(depthSlider.el, noMixedCheck.el);
-  parensOptions.append(parensRow);
+  // Stacked: delimiter kinds, then nesting depth, then no-mixed under it.
+  parensOptions.append(delimSlider.el, depthSlider.el, noMixedCheck.el);
 
   // On-the-fly training: how many fresh samples make up one epoch.
   const trainSlider: Slider = makeSlider({
@@ -189,7 +201,7 @@ export function mountDatasetPanel(
   grokClearBtn.classList.add("btn-compact", "grok-clear-btn");
   grokClearBtn.title = "Clear the grok filters";
   const grokRandomBtn = makeButton("🎲", () => {
-    const r = randomRegexes(ctx.state.task, ctx.state.numSymbols);
+    const r = randomRegexes(ctx.state.task, ctx.state.numSymbols, ctx.state.parensDelims);
     grokInput.set(r);
     ctx.apply({ grokFilters: r });
   });
@@ -302,11 +314,11 @@ export function mountDatasetPanel(
         : (() => {
             const span = document.createElement("span");
             span.className = "tok char";
-            span.textContent = tokenChar(s.task, id, s.numSymbols);
+            span.textContent = tokenChar(s.task, id, s.numSymbols, s.parensDelims);
             return span;
           })();
     if (wrong) el.classList.add("wrong");
-    el.title = tip || tokenChar(s.task, id, s.numSymbols);
+    el.title = tip || tokenChar(s.task, id, s.numSymbols, s.parensDelims);
     return el;
   }
 
@@ -328,7 +340,7 @@ export function mountDatasetPanel(
     vocabTokens.innerHTML = "";
     for (let id = 0; id < s.numSymbols; id++) {
       const el = renderToken(id);
-      const ch = tokenChar(s.task, id, s.numSymbols);
+      const ch = tokenChar(s.task, id, s.numSymbols, s.parensDelims);
       el.classList.add("copyable");
       el.title = `Click to copy "${ch}"`;
       el.addEventListener("click", () => {
@@ -457,8 +469,10 @@ export function mountDatasetPanel(
     uniformLenCheck.set(s.uniformLen);
     trainSlider.set(s.trainPerEpoch);
 
-    // Parens options: visible only for the parens task; depth max follows length.
+    // Parens options: visible only for the parens task; maxes follow vocab/length.
     parensOptions.style.display = s.task === "parens" ? "" : "none";
+    delimSlider.setMax(maxDelims(s.numSymbols));
+    delimSlider.set(s.parensDelims);
     depthSlider.setMax(maxNestingDepth(s.maxSeqLen));
     depthSlider.set(s.parensMaxDepth);
     noMixedCheck.set(s.parensNoMixedNesting);

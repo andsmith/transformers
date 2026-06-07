@@ -769,6 +769,11 @@ body.resizing {
   border-style: dashed;
 }
 
+/* Compact inline sliders (parens delimiter/depth controls). */
+.slider.inline.narrow {
+  max-width: 220px;
+}
+
 /* Grok filter input + random button. */
 .grok-row {
   display: flex;

@@ -30,6 +30,7 @@ export interface ExperimentConfig {
   /** Added 0.0.36 (parens options + grokking); older saves use defaults. */
   parensMaxDepth?: number;
   parensNoMixedNesting?: boolean;
+  parensDelims?: number;
   grokFilters?: string;
   /** Removed in 0.0.37 (auto-decided); ignored if present in old saves. */
   enumCap?: number;
@@ -72,6 +73,7 @@ export function buildSave(state: AppState, opts: SaveOptions): SaveFile {
     uniformLen: state.uniformLen,
     parensMaxDepth: state.parensMaxDepth,
     parensNoMixedNesting: state.parensNoMixedNesting,
+    parensDelims: state.parensDelims,
     grokFilters: state.grokFilters,
     seed: state.seed,
     randomSeed: state.randomSeed,
@@ -138,6 +140,7 @@ export function applySave(
   state.uniformLen = e.uniformLen ?? true;
   state.parensMaxDepth = e.parensMaxDepth ?? Math.max(1, Math.floor(e.maxSeqLen / 2));
   state.parensNoMixedNesting = e.parensNoMixedNesting ?? false;
+  state.parensDelims = e.parensDelims ?? 1;
   state.grokFilters = e.grokFilters ?? "";
   state.seed = e.seed;
   // Force deterministic mode so the loaded seed is actually used (and the
