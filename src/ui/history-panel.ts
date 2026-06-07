@@ -26,6 +26,13 @@ const NEXT_MODE: Record<HistoryMode, HistoryMode> = {
   hits: "loss",
 };
 
+function median(xs: number[]): number {
+  if (xs.length === 0) return 0;
+  const s = [...xs].sort((a, b) => a - b);
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
 function drawStar(
   g: CanvasRenderingContext2D,
   cx: number,
@@ -134,6 +141,16 @@ export function mountHistoryPanel(host: HTMLElement, ctx: AppContext): PanelHand
       if (data.length === 0) return empty("seconds / epoch");
       pts = data.map((p) => ({ x: p.x, ys: [p.seconds] }));
       colors = [SECS_COLOR];
+      // The first epoch(s) include one-time startup/JIT overhead and can dwarf
+      // the rest. Drop leading points that are big spikes vs the median, so the
+      // plot's scale reflects steady-state timing (keep ≥2 points).
+      if (pts.length > 3) {
+        const med = median(pts.map((p) => p.ys[0] as number));
+        const maxDrop = Math.min(3, pts.length - 2);
+        let drop = 0;
+        while (drop < maxDrop && (pts[drop].ys[0] as number) > 4 * med) drop++;
+        if (drop > 0) pts = pts.slice(drop);
+      }
     } else {
       const data = ctx.state.loop.epochStats;
       if (data.length === 0) return empty("test-set hits / epoch");
