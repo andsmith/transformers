@@ -612,12 +612,22 @@ body.resizing {
 }
 
 /* ---- dataset panel ---- */
+/* Dataset (controls) frame: content height, resizable, scrolls if shrunk. */
 .dataset-panel {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: auto;
+}
+
+/* Test Set frame: fills the rest of the column; the list scrolls internally. */
+.test-set-panel {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   overflow: hidden;
 }
 
@@ -637,12 +647,6 @@ body.resizing {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  flex: 1;
-  min-height: 0;
-}
-
-/* The Test Set box fills the rest of the panel; its list scrolls. */
-.test-set-box {
   flex: 1;
   min-height: 0;
 }

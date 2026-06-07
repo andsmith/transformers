@@ -64,15 +64,20 @@ window.addEventListener("DOMContentLoaded", () => {
 
   // --- grid scaffold ---
   root.classList.add("grid");
-  // Left column: Run panel above the dataset panel, with a draggable divider.
+  // Left column: Run, Dataset (controls), Test Set — each frame separated by a
+  // draggable divider.
   const leftHost = document.createElement("div");
   leftHost.className = "left-col";
   const runHost = document.createElement("div");
-  const datasetHost = document.createElement("div");
-  const leftSplitter = document.createElement("div");
-  leftSplitter.className = "left-splitter";
-  leftHost.append(runHost, leftSplitter, datasetHost);
-  mountLeftSplitter(leftHost, runHost, leftSplitter);
+  const datasetGenHost = document.createElement("div");
+  const testHost = document.createElement("div");
+  const split1 = document.createElement("div");
+  const split2 = document.createElement("div");
+  split1.className = "left-splitter";
+  split2.className = "left-splitter";
+  leftHost.append(runHost, split1, datasetGenHost, split2, testHost);
+  mountLeftSplitter(leftHost, runHost, split1);
+  mountLeftSplitter(leftHost, datasetGenHost, split2);
 
   const topHost = section("top");
   const centerHost = section("center");
@@ -258,7 +263,7 @@ window.addEventListener("DOMContentLoaded", () => {
   };
 
   top = mountTopPanel(topHost, ctx);
-  dataset = mountDatasetPanel(datasetHost, ctx);
+  dataset = mountDatasetPanel(datasetGenHost, testHost, ctx);
   loss = mountLossPanel(lossHost, ctx);
   network = mountNetworkView(centerHost, ctx);
   run = mountRunControls(runHost, ctx); // top of the left column

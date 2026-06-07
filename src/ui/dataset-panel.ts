@@ -1,9 +1,10 @@
 /**
- * Dataset panel. "Dataset Generation" (display, vocabulary, sequence length —
- * changes reset training) and "Dataset Size" (train samples/epoch, test set
- * size, regenerate/seed — changes keep the model training). Training samples
- * are drawn on the fly; the list below shows the FIXED test set (the only
- * samples with stable ids).
+ * Two left-column frames driven by one mount:
+ * - the Dataset frame (`genHost`): "Sequence options" + "Test Set Options".
+ * - the Test Set frame (`testHost`): grok filters, sort controls, and the
+ *   indexed list of the FIXED held-out test set with per-epoch eval marks.
+ * Training samples are drawn on the fly (no stable ids); only test samples are
+ * listed.
  */
 
 import type { AppContext, DisplayMode } from "../state";
@@ -32,14 +33,20 @@ import {
 } from "./controls";
 import type { PanelHandle } from "./top-panel";
 
-export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHandle {
-  host.classList.add("panel", "dataset-panel");
-  host.innerHTML = "";
+export function mountDatasetPanel(
+  genHost: HTMLElement,
+  testHost: HTMLElement,
+  ctx: AppContext,
+): PanelHandle {
+  genHost.classList.add("panel", "dataset-panel");
+  genHost.innerHTML = "";
+  testHost.classList.add("panel", "test-set-panel");
+  testHost.innerHTML = "";
 
   const header = document.createElement("div");
   header.className = "panel-header";
   header.textContent = "Dataset";
-  host.appendChild(header);
+  genHost.appendChild(header);
 
   // --- controls ---
   const displayRadios: RadioGroup<DisplayMode> = makeRadioGroup(
@@ -201,24 +208,21 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
   const grokStatus = document.createElement("div");
   grokStatus.className = "control-note grok-status";
 
-  // --- sub-boxes: Generation (resets training) | Size (does not) ---
-  const genBox = makeFieldset("Dataset Generation");
+  // --- Dataset frame: two sub-boxes ---
+  const genBox = makeFieldset("Sequence options");
   genBox.classList.add("sub-box");
-  genBox.append(displayRadios.el, vocabRow, lenRow, parensOptions);
+  genBox.append(displayRadios.el, vocabRow, lenRow, uniformLenCheck.el, parensOptions);
 
-  const sizeBox = makeFieldset("Dataset Size");
+  const sizeBox = makeFieldset("Test Set Options");
   sizeBox.classList.add("sub-box");
-  sizeBox.append(
-    uniformLenCheck.el,
-    trainSlider.el,
-    testSlider.el,
-    spaceHint,
-    regenRow,
-    grokRow,
-    grokStatus,
-  );
+  sizeBox.append(trainSlider.el, testSlider.el, spaceHint, regenRow);
 
-  // --- Test Set box (its own sub-box, fills the remaining panel height) ---
+  const controls = document.createElement("div");
+  controls.className = "dataset-controls";
+  controls.append(genBox, sizeBox);
+  genHost.appendChild(controls);
+
+  // --- Test Set frame (its own panel): grok controls, sorting, the list ---
   // View state (panel-local).
   type SortKey = "input" | "wrong" | "first";
   let sortKey: SortKey | null = null; // null = index order
@@ -265,13 +269,9 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
     update();
   }
 
-  const testBox = makeFieldset("Test Set");
-  testBox.classList.add("sub-box", "test-set-box");
-
-  // Title row: dynamic title text + a refresh button (active when stale).
-  const testTitle = testBox.querySelector(".fieldset-title") as HTMLElement;
-  testTitle.textContent = "";
-  testTitle.classList.add("test-title-row");
+  // Frame header: dynamic title text + a refresh button (active when stale).
+  const testTitle = document.createElement("div");
+  testTitle.className = "panel-header test-title-row";
   const titleText = document.createElement("span");
   const refreshBtn = makeButton("⟳", () => {
     // Pull the latest eval into the (still-frozen) view.
@@ -285,12 +285,9 @@ export function mountDatasetPanel(host: HTMLElement, ctx: AppContext): PanelHand
 
   const examplesEl = document.createElement("div");
   examplesEl.className = "examples";
-  testBox.append(sortRow, examplesEl);
 
-  const controls = document.createElement("div");
-  controls.className = "dataset-controls";
-  controls.append(genBox, sizeBox, testBox);
-  host.appendChild(controls);
+  // Grok controls sit at the top of the Test Set frame, above the sort row.
+  testHost.append(testTitle, grokRow, grokStatus, sortRow, examplesEl);
 
   function renderToken(id: number, wrong = false, tip = ""): HTMLElement {
     const s = ctx.state;
