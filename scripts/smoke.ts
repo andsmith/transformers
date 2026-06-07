@@ -16,12 +16,23 @@ import {
 } from "../src/tasks/datasets";
 import { compileFilters, enumerateMatches, inputToGlyphs, matchesAny } from "../src/tasks/grok";
 import { TransformerModel } from "../src/model/transformer";
-import { SGD } from "../src/training/optimizer";
+import { crossEntropy, sum } from "../src/engine/ops";
+import type { Value } from "../src/engine/value";
+import { FastModel } from "../src/model/fast";
+import { SGD, FastSGD } from "../src/training/optimizer";
 import { TrainingLoop, PIPELINE_STAGES } from "../src/training/loop";
 import { Rng } from "../src/util/rng";
+import type { Example, Task } from "../src/tasks/types";
+import { isClassification } from "../src/tasks/types";
 
 const TRAIN_PER_EPOCH = 48;
 const GEN = { parensMaxDepth: 3, parensNoMixedNesting: false, parensDelims: 1, filters: [] };
+
+// Deterministic init rng (linear congruential), fresh each call.
+const initRng = () => {
+  let s = 42;
+  return () => ((s = (s * 16807) % 2147483647) / 2147483647);
+};
 
 function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
   const dataset = generateTestSet({
@@ -34,22 +45,11 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
     uniformLen: true,
     ...GEN,
   });
-  const model = new TransformerModel(
-    {
-      task,
-      vocabSize: 4,
-      embedDim: 8,
-      peScheme: "sinusoidal",
-      numOutputLayers: layers,
-      maxLen: 6,
-    },
-    // simple deterministic rng
-    (() => {
-      let s = 42;
-      return () => ((s = (s * 16807) % 2147483647) / 2147483647);
-    })(),
+  const model = new FastModel(
+    { task, vocabSize: 4, embedDim: 8, peScheme: "sinusoidal", numOutputLayers: layers, maxLen: 6 },
+    initRng(),
   );
-  const optim = new SGD(model.store, { learningRate: 0.1 });
+  const optim = new FastSGD(model, { learningRate: 0.1 });
   return {
     dataset,
     model,
@@ -139,10 +139,10 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
   // wrong-count must match an independent argmax recompute for a few samples.
   for (const e of ev.slice(0, 3)) {
     const ex = dataset.test.find((t) => t.index === e.index)!;
-    const logits = model.forward(ex.input).logits;
+    const logits = model.forward(ex.input).logits.v;
     let wrong = 0;
     for (let i = 0; i < logits.length; i++) {
-      const row = logits[i].map((v) => v.data);
+      const row = logits[i];
       let arg = 0;
       for (let k = 1; k < row.length; k++) if (row[k] > row[arg]) arg = k;
       if (arg !== ex.output[i]) wrong++;
@@ -166,17 +166,17 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
   for (let i = 0; i < 100; i++) a.loop.stepIteration();
 
   const weights: Record<string, number[][]> = {};
-  for (const p of a.model.store.params) {
-    weights[p.name] = p.values.map((row) => row.map((v) => v.data));
+  for (const p of a.model.params) {
+    weights[p.name] = p.w.map((row) => row.slice());
   }
   const hist = a.loop.serialize();
 
   const b = build("copy");
-  for (const p of b.model.store.params) {
+  for (const p of b.model.params) {
     const w = weights[p.name];
     if (!w) throw new Error(`missing weights for ${p.name}`);
     for (let r = 0; r < p.rows; r++) {
-      for (let c = 0; c < p.cols; c++) p.values[r][c].data = w[r][c];
+      for (let c = 0; c < p.cols; c++) p.w[r][c] = w[r][c];
     }
   }
   b.loop.restore(hist);
@@ -368,6 +368,141 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
   // confirm generation produced a non-trivial, varied test set without error.
   if (ds.test.length < 50) throw new Error("parens test set too small");
   console.log(`parens options: generated ${ds.test.length} samples (depth≤2, no-mixed) OK`);
+}
+
+// --- 8. fast engine: gradient parity vs scalar oracle + finite-diff + speed ---
+{
+  const cfg = (task: Task, layers: 1 | 2) => ({
+    task,
+    vocabSize: 4,
+    embedDim: 8,
+    peScheme: "sinusoidal" as const,
+    numOutputLayers: layers,
+    maxLen: 6,
+  });
+
+  // Scalar-model loss (the autograd oracle), mirroring the loop's lossFrom.
+  const scalarLoss = (m: TransformerModel, ex: Example): Value => {
+    const { logits } = m.forward(ex.input);
+    if (isClassification(m.cfg.task)) {
+      const logit = logits[0][0];
+      const p = logit.neg().exp().add(1).pow(-1);
+      const y = ex.output[0];
+      return p.log().mul(y).add(p.neg().add(1).log().mul(1 - y)).neg();
+    }
+    return sum(ex.output.map((t, i) => crossEntropy(logits[i], t))).div(ex.output.length);
+  };
+
+  for (const [task, layers] of [
+    ["copy", 1],
+    ["copy", 2],
+    ["parens", 1],
+    ["parens", 2],
+  ] as Array<[Task, 1 | 2]>) {
+    const scalar = new TransformerModel(cfg(task, layers), initRng());
+    const fast = new FastModel(cfg(task, layers), initRng());
+    // Copy scalar weights into the fast model by name (identical init anyway).
+    const byName = new Map(fast.params.map((p) => [p.name, p]));
+    for (const sp of scalar.store.params) {
+      const fp = byName.get(sp.name)!;
+      for (let r = 0; r < sp.rows; r++)
+        for (let c = 0; c < sp.cols; c++) fp.w[r][c] = sp.values[r][c].data;
+    }
+
+    const ex: Example =
+      task === "parens"
+        ? { index: 0, input: [0, 1, 2, 0, 1], output: [1] }
+        : { index: 0, input: [0, 3, 1, 2, 3], output: [0, 3, 1, 2, 3] };
+    if (task === "reverse") ex.output = ex.input.slice().reverse();
+
+    // Scalar grads.
+    scalar.zeroGrad();
+    const sLoss = scalarLoss(scalar, ex);
+    sLoss.backward();
+
+    // Fast grads.
+    const trace = fast.forward(ex.input);
+    const fLoss = fast.computeLoss(trace, ex);
+    fast.zeroGrad();
+    fast.backward(trace);
+
+    if (Math.abs(sLoss.data - fLoss) > 1e-9)
+      throw new Error(`${task}/${layers}: loss mismatch ${sLoss.data} vs ${fLoss}`);
+
+    let maxDiff = 0;
+    for (const sp of scalar.store.params) {
+      const fp = byName.get(sp.name)!;
+      for (let r = 0; r < sp.rows; r++)
+        for (let c = 0; c < sp.cols; c++)
+          maxDiff = Math.max(maxDiff, Math.abs(sp.values[r][c].grad - fp.g[r][c]));
+    }
+    if (maxDiff > 1e-6) throw new Error(`${task}/${layers}: grad parity off by ${maxDiff}`);
+    console.log(`parity ${task}/${layers}: loss & grads match (max Δgrad ${maxDiff.toExponential(1)})`);
+  }
+
+  // Finite-difference gradient check on the fast model alone.
+  {
+    const fast = new FastModel(cfg("copy", 2), initRng());
+    const ex: Example = { index: 0, input: [1, 2, 0, 3], output: [1, 2, 0, 3] };
+    const lossOf = () => fast.computeLoss(fast.forward(ex.input), ex);
+    const tr = fast.forward(ex.input);
+    fast.computeLoss(tr, ex);
+    fast.zeroGrad();
+    fast.backward(tr);
+    const eps = 1e-5;
+    let maxRel = 0;
+    for (const p of fast.params) {
+      for (const [r, c] of [[0, 0], [p.rows - 1, p.cols - 1], [0, p.cols - 1]] as Array<[number, number]>) {
+        const orig = p.w[r][c];
+        p.w[r][c] = orig + eps;
+        const lp = lossOf();
+        p.w[r][c] = orig - eps;
+        const lm = lossOf();
+        p.w[r][c] = orig;
+        const numeric = (lp - lm) / (2 * eps);
+        const analytic = p.g[r][c];
+        const rel = Math.abs(numeric - analytic) / (Math.abs(numeric) + Math.abs(analytic) + 1e-9);
+        maxRel = Math.max(maxRel, rel);
+      }
+    }
+    if (maxRel > 1e-3) throw new Error(`finite-diff check failed: max rel err ${maxRel}`);
+    console.log(`finite-diff: analytic grads match central differences (max rel ${maxRel.toExponential(1)})`);
+  }
+
+  // Speedup: scalar vs fast train step (forward+backward+update), same work.
+  {
+    const N = 2000;
+    const sample: Example = { index: 0, input: [0, 1, 2, 3, 0, 1], output: [0, 1, 2, 3, 0, 1] };
+    const scalar = new TransformerModel(cfg("copy", 1), initRng());
+    const sOpt = new SGD(scalar.store, { learningRate: 0.05 });
+    const fast = new FastModel(cfg("copy", 1), initRng());
+    const fOpt = new FastSGD(fast, { learningRate: 0.05 });
+
+    let t = Date.now();
+    for (let i = 0; i < N; i++) {
+      const { logits } = scalar.forward(sample.input);
+      const loss = sum(sample.output.map((tt, j) => crossEntropy(logits[j], tt))).div(sample.output.length);
+      scalar.zeroGrad();
+      loss.backward();
+      sOpt.step();
+    }
+    const sScalar = (N * 1000) / (Date.now() - t);
+
+    t = Date.now();
+    for (let i = 0; i < N; i++) {
+      const trace = fast.forward(sample.input);
+      fast.computeLoss(trace, sample);
+      fast.zeroGrad();
+      fast.backward(trace);
+      fOpt.step();
+    }
+    const sFast = (N * 1000) / (Date.now() - t);
+    const ratio = sFast / sScalar;
+    console.log(
+      `speedup: scalar ${sScalar.toFixed(0)}/s, fast ${sFast.toFixed(0)}/s → ${ratio.toFixed(1)}×`,
+    );
+    if (ratio < 10) throw new Error(`fast engine only ${ratio.toFixed(1)}× (want ≥10×)`);
+  }
 }
 
 console.log("SMOKE OK");

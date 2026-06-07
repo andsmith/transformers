@@ -88,8 +88,8 @@ export function buildSave(state: AppState, opts: SaveOptions): SaveFile {
 
   if (opts.weights) {
     const weights: Record<string, number[][]> = {};
-    for (const p of state.model.store.params) {
-      weights[p.name] = p.values.map((row) => row.map((v) => v.data));
+    for (const p of state.model.params) {
+      weights[p.name] = p.w.map((row) => row.slice());
     }
     file.weights = weights;
     if (opts.history) file.history = state.loop.serialize();
@@ -151,13 +151,13 @@ export function applySave(
   doRebuild(); // same seed -> identical dataset + freshly initialized model
 
   if (file.weights) {
-    for (const p of state.model.store.params) {
+    for (const p of state.model.params) {
       const w = file.weights[p.name];
       if (!w || w.length !== p.rows || (w[0]?.length ?? 0) !== p.cols) {
         return `Weight matrix "${p.name}" missing or wrong shape in save file.`;
       }
       for (let r = 0; r < p.rows; r++) {
-        for (let c = 0; c < p.cols; c++) p.values[r][c].data = w[r][c];
+        for (let c = 0; c < p.cols; c++) p.w[r][c] = w[r][c];
       }
     }
     if (file.history) state.loop.restore(file.history);

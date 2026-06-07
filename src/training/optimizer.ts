@@ -1,15 +1,37 @@
 /**
- * Plain SGD over a {@link ParamStore}.
- *
- * STUB: the gradient step is implemented (it is trivial and harmless), but it
- * is only meaningful once the model's forward/backward path is real. Momentum
- * and other optimizers come later.
+ * SGD. `SGD` operates on the scalar `ParamStore` (kept for the gradient-parity
+ * oracle); `FastSGD` drives the app's typed-array {@link FastModel}.
  */
 
 import { ParamStore } from "../model/params";
+import type { FastModel } from "../model/fast";
 
 export interface OptimizerConfig {
   learningRate: number;
+}
+
+/** SGD over a {@link FastModel}: w -= lr·g, then zero grads. */
+export class FastSGD {
+  constructor(
+    private readonly model: FastModel,
+    private cfg: OptimizerConfig,
+  ) {}
+
+  get learningRate(): number {
+    return this.cfg.learningRate;
+  }
+
+  setLearningRate(lr: number): void {
+    this.cfg = { ...this.cfg, learningRate: lr };
+  }
+
+  step(): void {
+    this.model.step(this.cfg.learningRate);
+  }
+
+  zeroGrad(): void {
+    this.model.zeroGrad();
+  }
 }
 
 export class SGD {

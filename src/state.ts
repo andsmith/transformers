@@ -4,12 +4,12 @@
  * after `main.ts` mutates it (the whiteboard_web convention).
  */
 
-import { generateTestSet, mulberry32, sampleSpaceSize, SPACE_HUGE } from "./tasks/datasets";
+import { generateTestSet, sampleSpaceSize, SPACE_HUGE } from "./tasks/datasets";
 import { compileFilters } from "./tasks/grok";
 import type { Dataset, Task } from "./tasks/types";
 import type { PEScheme } from "./model/embeddings";
-import { TransformerModel } from "./model/transformer";
-import { SGD } from "./training/optimizer";
+import { FastModel, modelRng } from "./model/fast";
+import { FastSGD } from "./training/optimizer";
 import { TrainingLoop, type StepGranularity } from "./training/loop";
 import { Rng } from "./util/rng";
 
@@ -56,8 +56,8 @@ export interface AppState {
   dataset: Dataset;
 
   // --- model + training (rebuilt when hyperparameters change) ---
-  model: TransformerModel;
-  optim: SGD;
+  model: FastModel;
+  optim: FastSGD;
   loop: TrainingLoop;
 
   // --- loss panel ---
@@ -231,16 +231,14 @@ export function rebuild(state: GenStateSlice & {
   trainPerEpoch: number;
 }): {
   dataset: Dataset;
-  model: TransformerModel;
-  optim: SGD;
+  model: FastModel;
+  optim: FastSGD;
   loop: TrainingLoop;
 } {
   const dataset = rebuildDataset(state);
 
-  // Derive a model-init RNG from the same seed (offset so weights differ from
-  // the data stream).
-  const rng = mulberry32(state.seed ^ 0x9e3779b9);
-  const model = new TransformerModel(
+  // Model-init RNG from the seed (offset so weights differ from the data stream).
+  const model = new FastModel(
     {
       task: state.task,
       vocabSize: state.numSymbols,
@@ -249,9 +247,9 @@ export function rebuild(state: GenStateSlice & {
       numOutputLayers: state.numOutputLayers,
       maxLen: state.maxSeqLen, // positional table must cover the longest sequence
     },
-    rng,
+    modelRng(state.seed),
   );
-  const optim = new SGD(model.store, { learningRate: state.learningRate });
+  const optim = new FastSGD(model, { learningRate: state.learningRate });
   // Separate (serializable) RNG stream for on-the-fly training-sample draws.
   const loop = new TrainingLoop(
     model,

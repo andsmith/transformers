@@ -7,10 +7,8 @@
  * in the UI for now.)
  */
 
-import { Value } from "../engine/value";
-import { crossEntropy, sum } from "../engine/ops";
-import { TransformerModel, type ForwardTrace } from "../model/transformer";
-import { SGD } from "./optimizer";
+import { FastModel, type FastTrace } from "../model/fast";
+import { FastSGD } from "./optimizer";
 import { Rng } from "../util/rng";
 import { generateTrainExample } from "../tasks/datasets";
 import { isClassification } from "../tasks/types";
@@ -46,8 +44,8 @@ export const PIPELINE_STAGES: PipelineStage[] = [
 /** The sample currently being stepped through, plus its cached computation. */
 export interface StagedSample {
   sample: Example;
-  trace: ForwardTrace;
-  lossValue: Value;
+  trace: FastTrace;
+  lossValue: number;
   phase: PassPhase;
   /** Index into PIPELINE_STAGES of the active column. */
   stage: number;
@@ -137,8 +135,8 @@ export class TrainingLoop {
   staged: StagedSample | null = null;
 
   constructor(
-    private readonly model: TransformerModel,
-    private readonly optim: SGD,
+    private readonly model: FastModel,
+    private readonly optim: FastSGD,
     private readonly data: Dataset,
     private readonly rng: Rng = new Rng((Math.random() * 2 ** 32) >>> 0),
     private readonly trainPerEpoch: number = 100,
@@ -231,29 +229,15 @@ export class TrainingLoop {
     this.staged = null;
   }
 
-  /** Loss for already-computed logits. */
-  private lossFrom(logits: Value[][], ex: Example): Value {
-    if (isClassification(this.data.task)) {
-      const logit = logits[0][0];
-      const p = logit.neg().exp().add(1).pow(-1); // sigmoid
-      const y = ex.output[0];
-      const term1 = p.log().mul(y);
-      const term2 = p.neg().add(1).log().mul(1 - y);
-      return term1.add(term2).neg(); // binary cross-entropy
-    }
-    const perPos = ex.output.map((t, i) => crossEntropy(logits[i], t));
-    return sum(perPos).div(ex.output.length);
-  }
-
-  /** Compute the (autograd) loss for one example (fresh forward). */
-  private loss(ex: Example): Value {
-    return this.lossFrom(this.model.forward(ex.input).logits, ex);
+  /** Loss for one example (fresh forward, no weight update). */
+  private loss(ex: Example): number {
+    return this.model.computeLoss(this.model.forward(ex.input), ex);
   }
 
   /**
    * Detailed evaluation over the full test set: per-sample predictions,
-   * correctness and confidence, plus the mean loss (numerically equal to the
-   * autograd loss). Used at each epoch rollover.
+   * correctness and confidence, plus the mean loss. Used at each epoch
+   * rollover.
    */
   private evalTestDetailed(): { mean: number | null; evals: TestEval[] } {
     const set = this.data.test;
@@ -263,13 +247,13 @@ export class TrainingLoop {
     let lossSum = 0;
 
     for (const ex of set) {
-      const logits = this.model.forward(ex.input).logits;
+      const logits = this.model.forward(ex.input).logits.v;
       const pred: number[] = [];
       const correct: boolean[] = [];
       const pTrue: number[] = [];
 
       if (classification) {
-        const p = 1 / (1 + Math.exp(-logits[0][0].data)); // P(label = 1)
+        const p = 1 / (1 + Math.exp(-logits[0][0])); // P(label = 1)
         const label = p >= 0.5 ? 1 : 0;
         const truth = ex.output[0];
         const pt = truth === 1 ? p : 1 - p;
@@ -280,7 +264,7 @@ export class TrainingLoop {
       } else {
         let posLoss = 0;
         for (let i = 0; i < logits.length; i++) {
-          const row = logits[i].map((v) => v.data);
+          const row = logits[i];
           const m = Math.max(...row);
           const exps = row.map((z) => Math.exp(z - m));
           const sum = exps.reduce((a, b) => a + b, 0);
@@ -320,7 +304,7 @@ export class TrainingLoop {
     if (set.length === 0) return null;
     const subset = set.slice(0, cap);
     let acc = 0;
-    for (const ex of subset) acc += this.loss(ex).data;
+    for (const ex of subset) acc += this.loss(ex);
     return acc / subset.length;
   }
 
@@ -379,13 +363,13 @@ export class TrainingLoop {
   stepLayer(): void {
     if (!this.staged || this.staged.phase === "complete") {
       const sample = this.nextSample();
-      const result = this.model.forward(sample.input);
-      const lossValue = this.lossFrom(result.logits, sample);
+      const trace = this.model.forward(sample.input);
+      const lossValue = this.model.computeLoss(trace, sample);
       this.model.zeroGrad();
-      lossValue.backward();
+      this.model.backward(trace);
       this.staged = {
         sample,
-        trace: result.trace,
+        trace,
         lossValue,
         phase: "forward",
         stage: 0,
@@ -409,7 +393,7 @@ export class TrainingLoop {
     // Backward sweep complete: apply the update, log the loss, and start the
     // next sample in the same click so stepping never feels like a no-op.
     this.optim.step();
-    this.finishSample(st.lossValue.data);
+    this.finishSample(st.lossValue);
     this.staged = null;
     this.stepLayer();
   }
@@ -425,21 +409,21 @@ export class TrainingLoop {
    */
   stepIteration(snapshot = true): void {
     const sample = this.nextSample();
-    const result = this.model.forward(sample.input);
-    const lossValue = this.lossFrom(result.logits, sample);
+    const trace = this.model.forward(sample.input);
+    const lossValue = this.model.computeLoss(trace, sample);
     this.model.zeroGrad();
-    lossValue.backward();
+    this.model.backward(trace);
     this.optim.step();
     if (snapshot || this.cursor === this.trainPerEpoch - 1) {
       this.staged = {
         sample,
-        trace: result.trace,
+        trace,
         lossValue,
         phase: "complete",
         stage: PIPELINE_STAGES.length - 1,
       };
     }
-    this.finishSample(lossValue.data);
+    this.finishSample(lossValue);
   }
 
   /**

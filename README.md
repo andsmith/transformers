@@ -57,15 +57,21 @@ The center panel is the focus of upcoming work:
 - Animated **backpropagation** showing gradients flow and weights update.
 - Step granularity: one layer, one iteration (sample), one epoch, or continuous.
 
-Because the model is built on a hand-rolled **scalar autograd** engine
-(`src/engine/value.ts`), every activation and gradient is an addressable value
-the visualization can read and color directly — no opaque tensor library.
+The training/visualization engine (`src/model/fast.ts`) is a hand-written
+typed-array forward/backward over plain `number[][]` matrices — fast enough for
+long grokking runs in the browser. It records every intermediate's values and
+gradients, so the visualization still reads and colors each activation and
+gradient directly (no opaque tensor library). A micrograd-style **scalar
+autograd** (`src/engine/value.ts`) is kept as the ground-truth oracle: the smoke
+test asserts the fast engine's gradients match it (≈1e-16) and that it is ≥10×
+faster.
 
 ## Tech stack
 
 - TypeScript + [Vite](https://vitejs.dev/), no UI framework.
 - HTML5 Canvas for the plots and network view.
-- Scalar reverse-mode autodiff (micrograd-style); zero ML-library dependencies.
+- Hand-written typed-array transformer (forward + backward); zero ML-library
+  dependencies. Scalar reverse-mode autodiff retained as a gradient oracle.
 
 ## Project structure
 
@@ -74,9 +80,9 @@ src/
   main.ts            App bootstrap: owns AppState, runs the rAF loop.
   state.ts           AppState + rebuild() (dataset/model/optimizer/loop).
   styles.css         CSS-grid page layout and panel styling.
-  engine/            Scalar autograd: value.ts (Value graph), ops.ts (softmax,
-                     cross-entropy, matVec, …).
-  model/             params.ts, embeddings.ts, attention.ts, transformer.ts.
+  engine/            Scalar autograd oracle: value.ts (Value graph), ops.ts.
+  model/             fast.ts (typed-array engine — app default); params.ts,
+                     embeddings.ts, attention.ts, transformer.ts (scalar oracle).
   tasks/             types.ts, grammar.ts (roles/glyphs/colors), datasets.ts.
   training/          optimizer.ts (SGD), loop.ts (step clock + loss history).
   ui/                controls.ts + top-panel, dataset-panel, loss-panel,

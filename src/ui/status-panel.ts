@@ -62,7 +62,7 @@ export function mountStatusPanel(host: HTMLElement, ctx: AppContext): PanelHandl
     // --- loss (single column, prominent numbers) ---
     const lastIterPt = loop.iterHistory[loop.iterHistory.length - 1];
     const lastEpochPt = loop.epochHistory[loop.epochHistory.length - 1];
-    const sampleLoss = st ? st.lossValue.data : lastIterPt?.trainLoss;
+    const sampleLoss = st ? st.lossValue : lastIterPt?.trainLoss;
     let bestTest: { x: number; v: number } | null = null;
     for (const p of loop.epochHistory) {
       if (p.testLoss !== null && (bestTest === null || p.testLoss < bestTest.v)) {

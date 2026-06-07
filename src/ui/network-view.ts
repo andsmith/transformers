@@ -154,10 +154,14 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
     const n = st.sample.input.length;
     const V = s.numSymbols;
     const d = s.embedDim;
-    const L = model.embeddings.posTable.length;
+    const L = model.posTable.rows;
     const classification = isClassification(s.task);
     const outUnits = model.outputUnits;
     const twoLayer = model.wFF !== null;
+
+    // Resolve an activation/weight to the array to draw for the current mode.
+    const aOf = (m: { v: number[][]; g: number[][] }, grad: boolean) => (grad ? m.g : m.v);
+    const wOf = (p: { w: number[][]; g: number[][] }, grad: boolean) => (grad ? p.g : p.w);
 
     // Width layout is ALWAYS sized for the maximum sequence length, so the
     // columns (and the user's resize adjustments) stay put across samples.
@@ -167,8 +171,8 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
     const rowH = (ch: number) => (ch * NH) / n;
     const colW = (cw: number) => (s.vizConstantSize ? (cw * NW) / n : cw);
 
-    const tokTable = model.embeddings.tokenTable;
-    const posTable = model.embeddings.posTable;
+    const tokTable = model.tokTable;
+    const posTable = model.posTable;
     const usedTokenRows = [...new Set(st.sample.input)];
     const usedPosRows = Array.from({ length: n }, (_, i) => i);
 
@@ -233,7 +237,7 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
         for (let id = 0; id < V; id++) {
           drawTokenGlyph(gc, id, x + (EMB_GUTTER - 6 - symW), tokTop + id * ch, symW, ch);
         }
-        const a = drawMatrix(gc, tx, y, cw, ch, tokTable, {
+        const a = drawMatrix(gc, tx, y, cw, ch, wOf(tokTable, mode.grad), {
           cmap: wCmap,
           kind: "weights",
           grad: mode.grad,
@@ -253,7 +257,7 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
         }
         gc.textAlign = "left";
         gc.textBaseline = "alphabetic";
-        drawMatrix(gc, tx, py, cw, ch, posTable, {
+        drawMatrix(gc, tx, py, cw, ch, wOf(posTable, mode.grad), {
           cmap: wCmap,
           kind: "weights",
           grad: mode.grad,
@@ -265,9 +269,8 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
     };
 
     // Helper for "m1 + m2 = m3" stacked activation columns with math labels.
-    type Mat = Parameters<typeof drawMatrix>[5];
     const stacked3 = (
-      items: Array<[() => Mat, string, { main: string; sub?: string }]>,
+      items: Array<[{ v: number[][]; g: number[][] }, string, { main: string; sub?: string }]>,
     ): ColumnSpec => ({
       wCells: d,
       fixedW: mathW,
@@ -279,7 +282,7 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
         let yy = y;
         for (let k = 0; k < items.length; k++) {
           const [mat, title, label] = items[k];
-          const sz = drawMatrix(gc, x, yy, cw, rh, mat(), {
+          const sz = drawMatrix(gc, x, yy, cw, rh, aOf(mat, mode.grad), {
             ...opts,
             title,
             mathLabel: label,
@@ -301,17 +304,16 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
 
     // 3. Embed Sum: tok + pos = x.
     const embedSum = stacked3([
-      [() => trace.tok, "token embeddings", { main: "E", sub: "tok" }],
-      [() => trace.pos, "position embeddings", { main: "E", sub: "pos" }],
-      [() => trace.x, "x = tok + pos", { main: "x" }],
+      [trace.tok, "token embeddings", { main: "E", sub: "tok" }],
+      [trace.pos, "position embeddings", { main: "E", sub: "pos" }],
+      [trace.x, "x = tok + pos", { main: "x" }],
     ]);
 
     // 4. Q K V: three rows of W (weights) -> projection (activations).
-    const attn = model.attention;
-    const qkvRows: Array<[string, typeof attn.wq, typeof trace.attention.q]> = [
-      ["Q", attn.wq, trace.attention.q],
-      ["K", attn.wk, trace.attention.k],
-      ["V", attn.wv, trace.attention.v],
+    const qkvRows: Array<[string, typeof model.wq, { v: number[][]; g: number[][] }]> = [
+      ["Q", model.wq, trace.q],
+      ["K", model.wk, trace.k],
+      ["V", model.wv, trace.v],
     ];
     const qkv: ColumnSpec = {
       wCells: 2 * d,
@@ -322,7 +324,7 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
         let yy = y;
         for (const [name, w, act] of qkvRows) {
           const rowCells = Math.max(d, NH);
-          const a = drawMatrix(gc, x, yy, cw, ch, w, {
+          const a = drawMatrix(gc, x, yy, cw, ch, wOf(w, mode.grad), {
             cmap: wCmap,
             kind: "weights",
             grad: mode.grad,
@@ -330,7 +332,7 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
             title: `W_${name}·x`,
             mathLabel: { main: "W", sub: name },
           });
-          drawMatrix(gc, x + a.w + 8, yy, cw, rowH(ch), act, {
+          drawMatrix(gc, x + a.w + 8, yy, cw, rowH(ch), aOf(act, mode.grad), {
             cmap: aCmap,
             kind: "acts",
             grad: mode.grad,
@@ -354,12 +356,12 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
         const sw = colW(cw);
         const sh = rowH(ch);
         const opts = { cmap: aCmap, kind: "acts" as const, grad: mode.grad, ghost: mode.ghost, font };
-        const a = drawMatrix(gc, x, y, sw, sh, trace.attention.scores, {
+        const a = drawMatrix(gc, x, y, sw, sh, aOf(trace.scores, mode.grad), {
           ...opts,
           title: "QKᵀ/√d",
           mathLabel: { main: "S" },
         });
-        drawMatrix(gc, x, y + a.h + ROW_GAP, sw, sh, trace.attention.attnW, {
+        drawMatrix(gc, x, y + a.h + ROW_GAP, sw, sh, aOf(trace.attnW, mode.grad), {
           ...opts,
           title: "softmax rows",
           mathLabel: { main: "A" },
@@ -374,7 +376,7 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
       hCells: NH,
       fixedH: matFH,
       draw(gc, x, y, cw, ch, mode) {
-        drawMatrix(gc, x, y, cw, rowH(ch), trace.attention.out, {
+        drawMatrix(gc, x, y, cw, rowH(ch), aOf(trace.out, mode.grad), {
           cmap: aCmap,
           kind: "acts",
           grad: mode.grad,
@@ -388,9 +390,9 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
 
     // 7. Residual: x + attnOut = y.
     const residual = stacked3([
-      [() => trace.x, "embedding sum", { main: "x" }],
-      [() => trace.attention.out, "attention out", { main: "A·V" }],
-      [() => trace.y, "y = x + attn", { main: "y" }],
+      [trace.x, "embedding sum", { main: "x" }],
+      [trace.out, "attention out", { main: "A·V" }],
+      [trace.y, "y = x + attn", { main: "y" }],
     ]);
 
     // 8. Output: (optional FF hidden layer) + W_out + output activations.
@@ -407,7 +409,7 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
         let yy = y;
 
         if (twoLayer) {
-          const f = drawMatrix(gc, x, yy, cw, ch, model.wFF!, {
+          const f = drawMatrix(gc, x, yy, cw, ch, wOf(model.wFF!, mode.grad), {
             cmap: wCmap,
             kind: "weights",
             grad: mode.grad,
@@ -416,7 +418,7 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
             mathLabel: { main: "W", sub: "ff" },
           });
           yy += f.h + ROW_GAP;
-          const hh = drawMatrix(gc, x, yy, cw, classification ? ch : rowH(ch), st.trace.hidden!, {
+          const hh = drawMatrix(gc, x, yy, cw, classification ? ch : rowH(ch), aOf(trace.hidden!, mode.grad), {
             cmap: aCmap,
             kind: "acts",
             grad: mode.grad,
@@ -428,7 +430,7 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
           yy += hh.h + ROW_GAP;
         }
 
-        const a = drawMatrix(gc, x, yy, cw, ch, model.wOut, {
+        const a = drawMatrix(gc, x, yy, cw, ch, wOf(model.wOut, mode.grad), {
           cmap: wCmap,
           kind: "weights",
           grad: mode.grad,
@@ -439,7 +441,7 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
         yy += a.h + ROW_GAP;
 
         if (mode.grad) {
-          drawMatrix(gc, x, yy, cw, outCellH, trace.logits, {
+          drawMatrix(gc, x, yy, cw, outCellH, trace.logits.g, {
             cmap: aCmap,
             kind: "acts",
             grad: true,
@@ -448,7 +450,7 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
             mathLabel: { main: "ŷ" },
           });
         } else if (classification) {
-          const p = 1 / (1 + Math.exp(-trace.logits[0][0].data));
+          const p = 1 / (1 + Math.exp(-trace.logits.v[0][0]));
           drawMatrix(gc, x, yy, cw, outCellH, [[p]], {
             cmap: aCmap,
             kind: "acts",
@@ -458,7 +460,7 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
             mathLabel: { main: "ŷ" },
           });
         } else {
-          const probs = trace.logits.map((row) => softmaxNums(row.map((v) => v.data)));
+          const probs = trace.logits.v.map((row) => softmaxNums(row));
           drawMatrix(gc, x, yy, cw, outCellH, probs, {
             cmap: aCmap,
             kind: "acts",
