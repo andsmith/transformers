@@ -1,23 +1,45 @@
 /**
  * Token + positional embeddings.
  *
- * The token table is always trainable. The positional table is either the
- * fixed sinusoidal encoding (Vaswani et al., 2017) or a trainable matrix,
- * depending on the configured scheme.
+ * The token table is trainable, or a fixed identity ("one-hot" pedagogical
+ * mode, d_tok = |V|). The positional table is the fixed sinusoidal encoding
+ * (Vaswani et al., 2017), a trainable matrix, a fixed identity in a dedicated
+ * trailing block of `maxLen` coordinates ("one-hot"), or all zeros ("none").
  */
 
 import { Value } from "../engine/value";
 import { addVec } from "../engine/ops";
 import { ParamStore, heUniform } from "./params";
 
-export type PEScheme = "sinusoidal" | "learned";
+export type PEScheme = "sinusoidal" | "learned" | "onehot" | "none";
 
 export interface EmbeddingConfig {
   vocabSize: number;
+  /** FULL embedding width (token dims + one-hot position block when used). */
   embedDim: number;
+  /** Token-content dims (= vocabSize when tokenOneHot; the one-hot position
+   *  identity block starts at this column offset). */
+  dTok: number;
+  /** Fixed identity token table instead of a trainable one. */
+  tokenOneHot: boolean;
   peScheme: PEScheme;
   /** Maximum sequence length we precompute positional encodings for. */
   maxLen: number;
+}
+
+/** A fixed (non-trainable) Value matrix — not registered in the store. */
+function fixedMatrix(
+  rows: number,
+  cols: number,
+  at: (r: number, c: number) => number,
+): Value[][] {
+  const table: Value[][] = [];
+  for (let r = 0; r < rows; r++) {
+    const row: Value[] = [];
+    for (let c = 0; c < cols; c++) row.push(new Value(at(r, c)));
+    table.push(row);
+  }
+  return table;
 }
 
 /** Per-sample embedding intermediates, exposed for the visualization. */
@@ -40,22 +62,32 @@ export class Embeddings {
 
   constructor(store: ParamStore, cfg: EmbeddingConfig, rng: () => number) {
     this.cfg = cfg;
-    this.tokenTable = store.matrix(
-      "tok_emb",
-      cfg.vocabSize,
-      cfg.embedDim,
-      heUniform(rng, cfg.embedDim),
-    );
+    this.tokenTable = cfg.tokenOneHot
+      ? fixedMatrix(cfg.vocabSize, cfg.embedDim, (r, c) => (c === r ? 1 : 0))
+      : store.matrix("tok_emb", cfg.vocabSize, cfg.embedDim, heUniform(rng, cfg.embedDim));
 
-    if (cfg.peScheme === "learned") {
-      this.posTable = store.matrix(
-        "pos_emb",
-        cfg.maxLen,
-        cfg.embedDim,
-        heUniform(rng, cfg.embedDim),
-      );
-    } else {
-      this.posTable = sinusoidalTable(cfg.maxLen, cfg.embedDim);
+    switch (cfg.peScheme) {
+      case "learned":
+        this.posTable = store.matrix(
+          "pos_emb",
+          cfg.maxLen,
+          cfg.embedDim,
+          heUniform(rng, cfg.embedDim),
+        );
+        break;
+      case "sinusoidal":
+        this.posTable = sinusoidalTable(cfg.maxLen, cfg.embedDim);
+        break;
+      case "onehot":
+        // Identity in a dedicated trailing block: position i flags coordinate
+        // dTok + i, fully disentangled from the token content dims.
+        this.posTable = fixedMatrix(cfg.maxLen, cfg.embedDim, (r, c) =>
+          c === cfg.dTok + r ? 1 : 0,
+        );
+        break;
+      case "none":
+        this.posTable = fixedMatrix(cfg.maxLen, cfg.embedDim, () => 0);
+        break;
     }
   }
 

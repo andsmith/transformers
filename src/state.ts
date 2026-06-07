@@ -8,7 +8,7 @@ import { generateTestSet, sampleSpaceSize, SPACE_HUGE } from "./tasks/datasets";
 import { compileFilters } from "./tasks/grok";
 import type { Dataset, Task } from "./tasks/types";
 import type { PEScheme } from "./model/embeddings";
-import { FastModel, modelRng } from "./model/fast";
+import { FastModel, modelDims, modelRng } from "./model/fast";
 import { FastSGD } from "./training/optimizer";
 import { TrainingLoop, type StepGranularity } from "./training/loop";
 import { Rng } from "./util/rng";
@@ -26,6 +26,7 @@ export interface AppState {
   task: Task;
   numSymbols: number; // vocabulary size (2..MAX_VOCAB)
   embedDim: number;
+  tokenOneHot: boolean; // fixed identity token embedding (d_tok = |V|)
   peScheme: PEScheme;
   numOutputLayers: 1 | 2;
   numHeads: number; // single head for now
@@ -106,6 +107,7 @@ export interface Defaults {
   task: Task;
   numSymbols: number;
   embedDim: number;
+  tokenOneHot: boolean;
   peScheme: PEScheme;
   numOutputLayers: 1 | 2;
   learningRate: number;
@@ -125,6 +127,7 @@ const DEFAULTS: Defaults = {
   task: "copy",
   numSymbols: 4,
   embedDim: 8,
+  tokenOneHot: false,
   peScheme: "sinusoidal",
   numOutputLayers: 1,
   learningRate: 0.05,
@@ -212,19 +215,32 @@ export function modelSummary(s: {
   task: Task;
   numSymbols: number;
   embedDim: number;
+  tokenOneHot: boolean;
   peScheme: PEScheme;
   numOutputLayers: 1 | 2;
+  maxSeqLen: number;
 }): string {
-  const pe = s.peScheme === "sinusoidal" ? "positional" : "learned";
+  const d = modelDims({
+    tokenOneHot: s.tokenOneHot,
+    vocabSize: s.numSymbols,
+    embedDim: s.embedDim,
+    peScheme: s.peScheme,
+    maxLen: s.maxSeqLen,
+  });
+  const pe = { sinusoidal: "sinusoidal", learned: "learned", onehot: "one-hot", none: "none" }[
+    s.peScheme
+  ];
+  const tok = s.tokenOneHot ? "one-hot" : "learned";
   return (
     `task: ${s.task} - |V| = ${s.numSymbols} - ` +
-    `Model(D_embed=${s.embedDim}, P_embed=${pe}, FF-layers=${s.numOutputLayers})`
+    `Model(D=${d}, T_embed=${tok}, P_embed=${pe}, FF-layers=${s.numOutputLayers})`
   );
 }
 
 /** (Re)build dataset, model, optimizer and training loop from the given state. */
 export function rebuild(state: GenStateSlice & {
   embedDim: number;
+  tokenOneHot: boolean;
   peScheme: PEScheme;
   numOutputLayers: 1 | 2;
   learningRate: number;
@@ -243,6 +259,7 @@ export function rebuild(state: GenStateSlice & {
       task: state.task,
       vocabSize: state.numSymbols,
       embedDim: state.embedDim,
+      tokenOneHot: state.tokenOneHot,
       peScheme: state.peScheme,
       numOutputLayers: state.numOutputLayers,
       maxLen: state.maxSeqLen, // positional table must cover the longest sequence

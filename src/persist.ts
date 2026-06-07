@@ -17,6 +17,8 @@ export interface ExperimentConfig {
   task: Task;
   numSymbols: number;
   embedDim: number;
+  /** Added 0.0.43 (pedagogical encodings); older saves default to false. */
+  tokenOneHot?: boolean;
   peScheme: PEScheme;
   numOutputLayers: 1 | 2;
   learningRate: number;
@@ -62,6 +64,7 @@ export function buildSave(state: AppState, opts: SaveOptions): SaveFile {
     task: state.task,
     numSymbols: state.numSymbols,
     embedDim: state.embedDim,
+    tokenOneHot: state.tokenOneHot,
     peScheme: state.peScheme,
     numOutputLayers: state.numOutputLayers,
     learningRate: state.learningRate,
@@ -129,6 +132,7 @@ export function applySave(
   state.task = e.task;
   state.numSymbols = e.numSymbols;
   state.embedDim = e.embedDim;
+  state.tokenOneHot = e.tokenOneHot ?? false;
   state.peScheme = e.peScheme;
   state.numOutputLayers = e.numOutputLayers;
   state.learningRate = e.learningRate;

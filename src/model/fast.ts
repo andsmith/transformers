@@ -22,9 +22,27 @@ export interface ModelConfig {
   task: Task;
   vocabSize: number;
   embedDim: number;
+  /** Fixed identity token embedding (pedagogical; d_tok = vocabSize). */
+  tokenOneHot: boolean;
   peScheme: PEScheme;
   numOutputLayers: 1 | 2;
   maxLen: number;
+}
+
+/** Token-content dims (one-hot forces |V|). */
+export function tokenDims(cfg: { tokenOneHot: boolean; vocabSize: number; embedDim: number }): number {
+  return cfg.tokenOneHot ? cfg.vocabSize : cfg.embedDim;
+}
+
+/** Full model width: token dims + a dedicated block for one-hot positions. */
+export function modelDims(cfg: {
+  tokenOneHot: boolean;
+  vocabSize: number;
+  embedDim: number;
+  peScheme: PEScheme;
+  maxLen: number;
+}): number {
+  return tokenDims(cfg) + (cfg.peScheme === "onehot" ? cfg.maxLen : 0);
 }
 
 /** A trainable weight matrix: values `w` and accumulated gradients `g`. */
@@ -89,14 +107,18 @@ function sinusoidalTable(maxLen: number, dim: number): number[][] {
 export class FastModel {
   readonly cfg: ModelConfig;
   readonly outputUnits: number;
-  /** Trainable params (excludes the fixed sinusoidal positional table). */
+  /** Full embedding width (token dims + one-hot position block when used). */
+  readonly dim: number;
+  /** Trainable params (excludes any fixed table: sinusoidal/one-hot/zero). */
   readonly params: Param[] = [];
 
+  /** Token table — a Param when learned, else a fixed identity block with a
+   *  grad buffer kept only for the visualization. */
   readonly tokTable: Param;
-  /** Positional table — a Param when learned, else a fixed (untrained) Mat-like
-   *  with a grad buffer kept only for the visualization. */
+  /** Positional table — a Param when learned, else fixed (sinusoidal /
+   *  one-hot identity block / zeros) with a display-only grad buffer. */
   readonly posTable: Param;
-  private readonly posTrainable: boolean;
+
   readonly wq: Param;
   readonly wk: Param;
   readonly wv: Param;
@@ -106,7 +128,9 @@ export class FastModel {
   constructor(cfg: ModelConfig, rng: () => number) {
     this.cfg = cfg;
     this.outputUnits = isClassification(cfg.task) ? 1 : cfg.vocabSize;
-    const d = cfg.embedDim;
+    const dTok = tokenDims(cfg);
+    const d = modelDims(cfg);
+    this.dim = d;
 
     // He-uniform initializer (matches scalar model: (rng*2-1)/sqrt(fanIn)).
     const he = (fanIn: number) => {
@@ -122,15 +146,39 @@ export class FastModel {
       if (trainable) this.params.push(p);
       return p;
     };
+    const fixed = (name: string, rows: number, cols: number, at: (r: number, c: number) => number): Param => {
+      const w = zeros(rows, cols);
+      for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) w[r][c] = at(r, c);
+      return { name, rows, cols, w, g: zeros(rows, cols) };
+    };
 
-    this.tokTable = make("tok_emb", cfg.vocabSize, d, he(d));
-    this.posTrainable = cfg.peScheme === "learned";
-    if (this.posTrainable) {
-      this.posTable = make("pos_emb", cfg.maxLen, d, he(d));
-    } else {
-      const sin = sinusoidalTable(cfg.maxLen, d);
-      this.posTable = { name: "pos_emb", rows: cfg.maxLen, cols: d, w: sin, g: zeros(cfg.maxLen, d) };
+    this.tokTable = cfg.tokenOneHot
+      ? fixed("tok_emb", cfg.vocabSize, d, (r, c) => (c === r ? 1 : 0))
+      : make("tok_emb", cfg.vocabSize, d, he(d));
+
+    switch (cfg.peScheme) {
+      case "learned":
+        this.posTable = make("pos_emb", cfg.maxLen, d, he(d));
+        break;
+      case "sinusoidal":
+        this.posTable = {
+          name: "pos_emb",
+          rows: cfg.maxLen,
+          cols: d,
+          w: sinusoidalTable(cfg.maxLen, d),
+          g: zeros(cfg.maxLen, d),
+        };
+        break;
+      case "onehot":
+        // Identity in a dedicated trailing block: position i flags coordinate
+        // dTok + i — "what" and "where" live on separate wires.
+        this.posTable = fixed("pos_emb", cfg.maxLen, d, (r, c) => (c === dTok + r ? 1 : 0));
+        break;
+      case "none":
+        this.posTable = fixed("pos_emb", cfg.maxLen, d, () => 0);
+        break;
     }
+
     this.wq = make("attn_Wq", d, d, he(d));
     this.wk = make("attn_Wk", d, d, he(d));
     this.wv = make("attn_Wv", d, d, he(d));
@@ -140,7 +188,9 @@ export class FastModel {
 
   zeroGrad(): void {
     for (const p of this.params) for (const row of p.g) row.fill(0);
-    for (const row of this.posTable.g) row.fill(0); // shown even when fixed
+    // Fixed tables aren't in params but their ∇ is shown — keep it per-sample.
+    for (const row of this.posTable.g) row.fill(0);
+    for (const row of this.tokTable.g) row.fill(0);
   }
 
   step(lr: number): void {
@@ -156,7 +206,7 @@ export class FastModel {
   /** Forward pass; records every intermediate's values into the trace. */
   forward(ids: number[]): FastTrace {
     const n = ids.length;
-    const d = this.cfg.embedDim;
+    const d = this.dim;
     const V = this.cfg.vocabSize;
     const invSqrtD = 1 / Math.sqrt(d);
     const classify = isClassification(this.cfg.task);
@@ -286,7 +336,7 @@ export class FastModel {
   /** Backward pass: fills every intermediate `.g` and accumulates weight `.g`. */
   backward(trace: FastTrace): void {
     const n = trace.x.v.length;
-    const d = this.cfg.embedDim;
+    const d = this.dim;
     const classify = isClassification(this.cfg.task);
 
     const dLogits = trace.logits.g;

@@ -153,7 +153,7 @@ export function mountNetworkView(host: HTMLElement, ctx: AppContext): PanelHandl
 
     const n = st.sample.input.length;
     const V = s.numSymbols;
-    const d = s.embedDim;
+    const d = model.dim; // full width (incl. the one-hot position block)
     const L = model.posTable.rows;
     const classification = isClassification(s.task);
     const outUnits = model.outputUnits;

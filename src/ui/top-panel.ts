@@ -73,10 +73,36 @@ export function mountTopPanel(host: HTMLElement, ctx: AppContext): PanelHandle {
     value: ctx.state.embedDim,
     onInput: (v) => ctx.apply({ embedDim: v }),
   });
+  const tokRadios: RadioGroup<"learned" | "onehot"> = makeRadioGroup(
+    [
+      { value: "learned", label: "Learned", title: "Trainable token embedding table" },
+      {
+        value: "onehot",
+        label: "One-hot",
+        title:
+          "Fixed identity embedding (d = |V|): symbol k = coordinate k, so weight " +
+          "columns become per-symbol vectors you can trace through the pipeline",
+      },
+    ],
+    ctx.state.tokenOneHot ? "onehot" : "learned",
+    (v) => ctx.apply({ tokenOneHot: v === "onehot" }),
+  );
   const peRadios: RadioGroup<PEScheme> = makeRadioGroup(
     [
       { value: "sinusoidal", label: "Sinusoidal", title: "Fixed encoding (Vaswani 2017)" },
       { value: "learned", label: "Learned", title: "Trainable positional weights" },
+      {
+        value: "onehot",
+        label: "One-hot",
+        title:
+          "Fixed identity positions in a dedicated block of maxLen extra dims — " +
+          "'what' and 'where' on separate wires (pedagogical; doesn't scale)",
+      },
+      {
+        value: "none",
+        label: "None",
+        title: "No positional information (which tasks survive?)",
+      },
     ],
     ctx.state.peScheme,
     (s) => ctx.apply({ peScheme: s }),
@@ -103,6 +129,7 @@ export function mountTopPanel(host: HTMLElement, ctx: AppContext): PanelHandle {
   modelRow.className = "fieldset-row";
   modelRow.append(
     embedSlider.el,
+    label("Tokens", tokRadios.el),
     label("Positional", peRadios.el),
     label("Output", layerRadios.el),
     label("Attention", headRadios.el),
@@ -183,6 +210,10 @@ export function mountTopPanel(host: HTMLElement, ctx: AppContext): PanelHandle {
     collapseBtn.title = s.topCollapsed ? "Restore the controls" : "Collapse the controls";
     taskRadios.set(s.task);
     embedSlider.set(s.embedDim);
+    // One-hot tokens pin d_tok to |V| — the embed-dim slider is inert.
+    embedSlider.el.classList.toggle("disabled", s.tokenOneHot);
+    embedSlider.el.title = s.tokenOneHot ? "One-hot tokens: d = |V| (slider inactive)" : "";
+    tokRadios.set(s.tokenOneHot ? "onehot" : "learned");
     peRadios.set(s.peScheme);
     layerRadios.set(String(s.numOutputLayers) as "1" | "2");
     lrSlider.set(Math.log10(s.learningRate));

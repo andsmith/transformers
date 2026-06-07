@@ -34,7 +34,11 @@ const initRng = () => {
   return () => ((s = (s * 16807) % 2147483647) / 2147483647);
 };
 
-function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
+function build(
+  task: "copy" | "parens",
+  layers: 1 | 2 = 1,
+  opts: { tokenOneHot?: boolean; peScheme?: "sinusoidal" | "learned" | "onehot" | "none" } = {},
+) {
   const dataset = generateTestSet({
     task,
     vocabSize: 4,
@@ -46,7 +50,15 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
     ...GEN,
   });
   const model = new FastModel(
-    { task, vocabSize: 4, embedDim: 8, peScheme: "sinusoidal", numOutputLayers: layers, maxLen: 6 },
+    {
+      task,
+      vocabSize: 4,
+      embedDim: 8,
+      tokenOneHot: opts.tokenOneHot ?? false,
+      peScheme: opts.peScheme ?? "sinusoidal",
+      numOutputLayers: layers,
+      maxLen: 6,
+    },
     initRng(),
   );
   const optim = new FastSGD(model, { learningRate: 0.1 });
@@ -372,11 +384,13 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
 
 // --- 8. fast engine: gradient parity vs scalar oracle + finite-diff + speed ---
 {
-  const cfg = (task: Task, layers: 1 | 2) => ({
+  type PE = "sinusoidal" | "learned" | "onehot" | "none";
+  const cfg = (task: Task, layers: 1 | 2, tokenOneHot = false, peScheme: PE = "sinusoidal") => ({
     task,
     vocabSize: 4,
     embedDim: 8,
-    peScheme: "sinusoidal" as const,
+    tokenOneHot,
+    peScheme,
     numOutputLayers: layers,
     maxLen: 6,
   });
@@ -393,14 +407,20 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
     return sum(ex.output.map((t, i) => crossEntropy(logits[i], t))).div(ex.output.length);
   };
 
-  for (const [task, layers] of [
-    ["copy", 1],
-    ["copy", 2],
-    ["parens", 1],
-    ["parens", 2],
-  ] as Array<[Task, 1 | 2]>) {
-    const scalar = new TransformerModel(cfg(task, layers), initRng());
-    const fast = new FastModel(cfg(task, layers), initRng());
+  for (const [task, layers, oneHot, pe] of [
+    ["copy", 1, false, "sinusoidal"],
+    ["copy", 2, false, "sinusoidal"],
+    ["parens", 1, false, "sinusoidal"],
+    ["parens", 2, false, "sinusoidal"],
+    // Pedagogical encodings: one-hot tokens / one-hot & none positions.
+    ["copy", 1, true, "onehot"],
+    ["copy", 1, true, "sinusoidal"],
+    ["copy", 2, false, "onehot"],
+    ["parens", 1, true, "onehot"],
+    ["copy", 1, false, "none"],
+  ] as Array<[Task, 1 | 2, boolean, PE]>) {
+    const scalar = new TransformerModel(cfg(task, layers, oneHot, pe), initRng());
+    const fast = new FastModel(cfg(task, layers, oneHot, pe), initRng());
     // Copy scalar weights into the fast model by name (identical init anyway).
     const byName = new Map(fast.params.map((p) => [p.name, p]));
     for (const sp of scalar.store.params) {
@@ -437,12 +457,18 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
           maxDiff = Math.max(maxDiff, Math.abs(sp.values[r][c].grad - fp.g[r][c]));
     }
     if (maxDiff > 1e-6) throw new Error(`${task}/${layers}: grad parity off by ${maxDiff}`);
-    console.log(`parity ${task}/${layers}: loss & grads match (max Δgrad ${maxDiff.toExponential(1)})`);
+    console.log(
+      `parity ${task}/${layers}${oneHot ? "/1hot-tok" : ""}/${pe}: loss & grads match ` +
+        `(max Δgrad ${maxDiff.toExponential(1)})`,
+    );
   }
 
-  // Finite-difference gradient check on the fast model alone.
-  {
-    const fast = new FastModel(cfg("copy", 2), initRng());
+  // Finite-difference gradient check on the fast model alone (both a default
+  // config and the fully one-hot pedagogical config).
+  for (const fast of [
+    new FastModel(cfg("copy", 2), initRng()),
+    new FastModel(cfg("copy", 2, true, "onehot"), initRng()),
+  ]) {
     const ex: Example = { index: 0, input: [1, 2, 0, 3], output: [1, 2, 0, 3] };
     const lossOf = () => fast.computeLoss(fast.forward(ex.input), ex);
     const tr = fast.forward(ex.input);
@@ -502,6 +528,34 @@ function build(task: "copy" | "parens", layers: 1 | 2 = 1) {
       `speedup: scalar ${sScalar.toFixed(0)}/s, fast ${sFast.toFixed(0)}/s → ${ratio.toFixed(1)}×`,
     );
     if (ratio < 10) throw new Error(`fast engine only ${ratio.toFixed(1)}× (want ≥10×)`);
+  }
+}
+
+// --- 9. pedagogical encodings: learning behavior ---
+{
+  const avgLoss = (loop: TrainingLoop, slice: number) => {
+    const pts = slice > 0 ? loop.iterHistory.slice(0, slice) : loop.iterHistory.slice(slice);
+    return pts.reduce((a, p) => a + p.trainLoss, 0) / pts.length;
+  };
+
+  // Fully one-hot (identity tokens + one-hot position block) still learns copy.
+  {
+    const { loop } = build("copy", 1, { tokenOneHot: true, peScheme: "onehot" });
+    for (let i = 0; i < 300; i++) loop.stepIteration();
+    const first = avgLoss(loop, 20);
+    const last = avgLoss(loop, -20);
+    console.log(`one-hot/one-hot copy: first20=${first.toFixed(3)} last20=${last.toFixed(3)}`);
+    if (!(last < first * 0.8)) throw new Error("one-hot/one-hot copy did not learn");
+  }
+
+  // Copy survives with NO positional encoding (the residual carries x_i).
+  {
+    const { loop } = build("copy", 1, { peScheme: "none" });
+    for (let i = 0; i < 300; i++) loop.stepIteration();
+    const first = avgLoss(loop, 20);
+    const last = avgLoss(loop, -20);
+    console.log(`no-PE copy: first20=${first.toFixed(3)} last20=${last.toFixed(3)}`);
+    if (!(last < first * 0.8)) throw new Error("copy without PE should still learn");
   }
 }
 

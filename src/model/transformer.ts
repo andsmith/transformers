@@ -19,10 +19,28 @@ export interface ModelConfig {
   task: Task;
   vocabSize: number;
   embedDim: number;
+  /** Fixed identity token embedding (d_tok = vocabSize). */
+  tokenOneHot: boolean;
   peScheme: PEScheme;
   /** 1 = single output projection; 2 = hidden layer relu(W_ff·y) first. */
   numOutputLayers: 1 | 2;
   maxLen: number;
+}
+
+/** Token-content dims (one-hot forces |V|). */
+export function tokenDims(cfg: { tokenOneHot: boolean; vocabSize: number; embedDim: number }): number {
+  return cfg.tokenOneHot ? cfg.vocabSize : cfg.embedDim;
+}
+
+/** Full model width: token dims + a dedicated block for one-hot positions. */
+export function modelDims(cfg: {
+  tokenOneHot: boolean;
+  vocabSize: number;
+  embedDim: number;
+  peScheme: PEScheme;
+  maxLen: number;
+}): number {
+  return tokenDims(cfg) + (cfg.peScheme === "onehot" ? cfg.maxLen : 0);
 }
 
 export interface ForwardTrace {
@@ -63,16 +81,23 @@ export class TransformerModel {
   readonly wOut: Value[][];
   readonly outputUnits: number;
 
+  /** Full embedding width (token dims + one-hot position block when used). */
+  readonly dim: number;
+
   constructor(cfg: ModelConfig, rng: () => number) {
     this.cfg = cfg;
     this.store = new ParamStore();
     this.outputUnits = isClassification(cfg.task) ? 1 : cfg.vocabSize;
+    const dim = modelDims(cfg);
+    this.dim = dim;
 
     this.embeddings = new Embeddings(
       this.store,
       {
         vocabSize: cfg.vocabSize,
-        embedDim: cfg.embedDim,
+        embedDim: dim,
+        dTok: tokenDims(cfg),
+        tokenOneHot: cfg.tokenOneHot,
         peScheme: cfg.peScheme,
         maxLen: cfg.maxLen,
       },
@@ -81,36 +106,34 @@ export class TransformerModel {
 
     this.attention = new AttentionHead(
       this.store,
-      { embedDim: cfg.embedDim, headDim: cfg.embedDim },
+      { embedDim: dim, headDim: dim },
       rng,
     );
 
     this.wFF =
       cfg.numOutputLayers === 2
-        ? this.store.matrix(
-            "ff_W1",
-            cfg.embedDim,
-            cfg.embedDim,
-            heUniform(rng, cfg.embedDim),
-          )
+        ? this.store.matrix("ff_W1", dim, dim, heUniform(rng, dim))
         : null;
 
     this.wOut = this.store.matrix(
       "out_proj",
       this.outputUnits,
-      cfg.embedDim,
-      heUniform(rng, cfg.embedDim),
+      dim,
+      heUniform(rng, dim),
     );
   }
 
   /**
-   * Zero gradients on all trainable params AND the (constant) sinusoidal
-   * positional table — the latter is part of the graph but not in the store,
-   * so without this its displayed ∇ would accumulate across samples.
+   * Zero gradients on all trainable params AND any fixed tables (sinusoidal /
+   * one-hot / zero) — those are part of the graph but not in the store, so
+   * without this their displayed ∇ would accumulate across samples.
    */
   zeroGrad(): void {
     this.store.zeroGrad();
     for (const row of this.embeddings.posTable) {
+      for (const v of row) v.grad = 0;
+    }
+    for (const row of this.embeddings.tokenTable) {
       for (const v of row) v.grad = 0;
     }
   }

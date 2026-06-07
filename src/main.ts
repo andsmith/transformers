@@ -36,6 +36,7 @@ const REBUILD_KEYS = new Set<keyof AppState>([
   "embedDim",
   "peScheme",
   "numOutputLayers",
+  "tokenOneHot",
   "minSeqLen",
   "maxSeqLen",
   "fixedLength",

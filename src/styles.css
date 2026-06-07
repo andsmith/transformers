@@ -112,6 +112,12 @@ body {
   opacity: 0.45;
 }
 
+/* A slider rendered inert (e.g. embed dim while one-hot tokens pin d = |V|). */
+.slider.disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
 /* Go = green, Stop = red (Step keeps the default blue). The compound
    selector outranks the later .btn rule regardless of source order. */
 .btn.btn-go {
