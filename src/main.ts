@@ -9,7 +9,7 @@ import {
   createInitialState,
   rebuild,
   rebuildDataset,
-  effectiveTrainPerEpoch,
+  loopTrainPerEpoch,
   maxNestingDepth,
   testSetMax,
   type AppContext,
@@ -48,8 +48,13 @@ const REBUILD_KEYS = new Set<keyof AppState>([
 ]);
 
 /** Dataset-SIZE keys: regenerate the test set / change the epoch length but
- *  keep the model and its training history. */
-const DATA_ONLY_KEYS = new Set<keyof AppState>(["trainPerEpoch", "testSetSize"]);
+ *  keep the model and its training history. Toggling demo mode swaps the test
+ *  set for the curated demo set the same way (model + history preserved). */
+const DATA_ONLY_KEYS = new Set<keyof AppState>([
+  "trainPerEpoch",
+  "testSetSize",
+  "demoExamples",
+]);
 
 /** Per-frame time budget (ms) for continuous "run" mode — scalar-autograd
  *  iterations vary a lot in cost with seqLen/embedDim, so budget time rather
@@ -203,16 +208,28 @@ window.addEventListener("DOMContentLoaded", () => {
     vsplit2.style.display = hide;
   }
 
+  /** Point the (current) loop at the demo set per state, and freeze weights for
+   *  inspection unless "update weights" is on. No-op outside demo mode. */
+  function syncDemoLoop(): void {
+    state.loop.freezeWeights = state.demoExamples && !state.demoUpdateWeights;
+    if (state.demoExamples) {
+      const pos = state.dataset.test.findIndex((e) => e.index === state.demoIndex);
+      state.loop.setDemoPosition(pos >= 0 ? pos : 0);
+    }
+  }
+
   function doRebuild(): void {
     const built = rebuild(state);
     state.dataset = built.dataset;
     state.model = built.model;
     state.optim = built.optim;
     state.loop = built.loop;
+    syncDemoLoop();
   }
 
   /** Regenerate just the test set / epoch length; the model keeps its weights
-   *  and the loss curves keep growing (dataset-size changes and Regenerate). */
+   *  and the loss curves keep growing (dataset-size changes, Regenerate, and
+   *  toggling demo mode). */
   function doRebuildDataOnly(): void {
     state.dataset = rebuildDataset(state);
     const loop = new TrainingLoop(
@@ -220,10 +237,11 @@ window.addEventListener("DOMContentLoaded", () => {
       state.optim,
       state.dataset,
       new Rng(state.seed ^ 0x51ed270b),
-      effectiveTrainPerEpoch(state, state.dataset.test.length),
+      loopTrainPerEpoch(state, state.dataset),
     );
     loop.carryOver(state.loop);
     state.loop = loop;
+    syncDemoLoop();
   }
 
   /** One Step click's worth of computation, at the chosen granularity. */
@@ -271,12 +289,16 @@ window.addEventListener("DOMContentLoaded", () => {
           Math.min(state.parensDelims, maxDelims(state.numSymbols)),
         );
         state.testSetSize = Math.min(state.testSetSize, testSetMax(state));
+        // A different task has its own demo list — start at the first.
+        if ("task" in patch) state.demoIndex = 0;
         state.running = false;
         doRebuild();
       } else if (keys.some((k) => DATA_ONLY_KEYS.has(k as keyof AppState))) {
         // Size-only change: new data, same model, history continues.
         doRebuildDataOnly();
       }
+      // Demo selection / weight-freeze toggle: no rebuild, just retarget the loop.
+      if ("demoIndex" in patch || "demoUpdateWeights" in patch) syncDemoLoop();
       refreshAll();
     },
     regenerate() {

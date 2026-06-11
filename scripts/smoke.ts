@@ -13,8 +13,11 @@ import {
   generateTrainExample,
   sampleKey,
   sampleSpaceSize,
+  taskOutput,
 } from "../src/tasks/datasets";
 import { compileFilters, enumerateMatches, inputToGlyphs, matchesAny } from "../src/tasks/grok";
+import { demosForTask, glyphsToIds, buildDemoDataset } from "../src/tasks/demos";
+import { isBalanced, parensRoles } from "../src/tasks/grammar";
 import { TransformerModel } from "../src/model/transformer";
 import { crossEntropy, sum } from "../src/engine/ops";
 import type { Value } from "../src/engine/value";
@@ -23,7 +26,7 @@ import { SGD, FastSGD } from "../src/training/optimizer";
 import { TrainingLoop, PIPELINE_STAGES } from "../src/training/loop";
 import { Rng } from "../src/util/rng";
 import type { Example, Task } from "../src/tasks/types";
-import { isClassification } from "../src/tasks/types";
+import { ALL_TASKS, isClassification } from "../src/tasks/types";
 
 const TRAIN_PER_EPOCH = 48;
 const GEN = { parensMaxDepth: 3, parensNoMixedNesting: false, parensDelims: 1, filters: [] };
@@ -557,6 +560,104 @@ function build(
     console.log(`no-PE copy: first20=${first.toFixed(3)} last20=${last.toFixed(3)}`);
     if (!(last < first * 0.8)) throw new Error("copy without PE should still learn");
   }
+}
+
+// --- 10. demonstration sets: authoring is consistent and runnable ---
+{
+  let total = 0;
+  for (const task of ALL_TASKS) {
+    const demos = demosForTask(task);
+    if (demos.length === 0) throw new Error(`no demos authored for ${task}`);
+    for (const d of demos) {
+      total++;
+      const numSymbols = d.setup?.numSymbols ?? 4;
+      const parensDelims = d.setup?.parensDelims ?? 1;
+      const maxLen = d.setup?.maxSeqLen ?? 12;
+      const where = `${task}/"${d.name}"`;
+
+      const ids = glyphsToIds(task, d.input, numSymbols, parensDelims);
+      if (ids === null)
+        throw new Error(`${where}: input "${d.input}" not representable (|V|=${numSymbols}, delims=${parensDelims})`);
+      if (ids.length > maxLen)
+        throw new Error(`${where}: length ${ids.length} exceeds setup maxLen ${maxLen}`);
+
+      // Glyphs round-trip through the id encoding.
+      const back = inputToGlyphs(task, numSymbols, ids, parensDelims);
+      if (back !== d.input) throw new Error(`${where}: glyph round-trip "${back}" != "${d.input}"`);
+
+      // Authored output matches the true task output.
+      const roles = parensRoles(numSymbols, parensDelims);
+      const out = taskOutput(task, ids, roles);
+      if (isClassification(task)) {
+        const label = out[0] === 1 ? "balanced" : "unbalanced";
+        const direct = isBalanced(ids, roles) ? "balanced" : "unbalanced";
+        if (label !== d.output || direct !== d.output)
+          throw new Error(`${where}: label "${label}" != authored "${d.output}"`);
+      } else {
+        const authored = glyphsToIds(task, d.output, numSymbols, parensDelims);
+        if (!authored || authored.join(",") !== out.join(","))
+          throw new Error(
+            `${where}: output "${d.output}" != computed "${inputToGlyphs(task, numSymbols, out, parensDelims)}"`,
+          );
+      }
+
+      // The model can run the demo under its recommended encoding.
+      const model = new FastModel(
+        {
+          task,
+          vocabSize: numSymbols,
+          embedDim: 8,
+          tokenOneHot: d.setup?.tokenOneHot ?? false,
+          peScheme: d.setup?.peScheme ?? "sinusoidal",
+          numOutputLayers: d.setup?.numOutputLayers ?? 1,
+          maxLen,
+        },
+        initRng(),
+      );
+      model.computeLoss(model.forward(ids), { index: 0, input: ids, output: out });
+    }
+  }
+  console.log(`demos: all ${total} authored demos consistent (ids, round-trip, output, model run) OK`);
+
+  // buildDemoDataset + frozen-weights inspection vs real training.
+  const ds = buildDemoDataset({
+    task: "reverse",
+    numSymbols: 4,
+    minSeqLen: 3,
+    maxSeqLen: 6,
+    uniformLen: true,
+    parensMaxDepth: 3,
+    parensNoMixedNesting: false,
+    parensDelims: 1,
+  });
+  if (!ds.isDemo) throw new Error("buildDemoDataset should mark isDemo");
+  if (ds.test.length === 0) throw new Error("demo dataset has no valid demos");
+
+  const model = new FastModel(
+    { task: "reverse", vocabSize: 4, embedDim: 8, tokenOneHot: true, peScheme: "onehot", numOutputLayers: 1, maxLen: 6 },
+    initRng(),
+  );
+  const optim = new FastSGD(model, { learningRate: 0.1 });
+  const loop = new TrainingLoop(model, optim, ds, new Rng(3), ds.test.length);
+  const checksum = () =>
+    model.params.reduce((a, p) => a + p.w.reduce((b, row) => b + row.reduce((c, x) => c + x, 0), 0), 0);
+
+  const before = checksum();
+  loop.freezeWeights = true;
+  for (let i = 0; i < 20; i++) loop.stepIteration();
+  if (checksum() !== before) throw new Error("frozen demo stepping changed weights");
+  loop.freezeWeights = false;
+  for (let i = 0; i < 20; i++) loop.stepIteration();
+  if (checksum() === before) throw new Error("unfrozen demo stepping did not change weights");
+
+  // "1 layer" re-runs the SELECTED demo (interactive single-step).
+  const pick = Math.min(2, ds.test.length - 1);
+  loop.setDemoPosition(pick);
+  loop.staged = null;
+  loop.stepLayer();
+  if (loop.staged?.sample.index !== ds.test[pick].index)
+    throw new Error("stepLayer should run the selected demo");
+  console.log(`demo loop: isDemo set, ${ds.test.length} demos, freeze respected, selected #${ds.test[pick].index} OK`);
 }
 
 console.log("SMOKE OK");

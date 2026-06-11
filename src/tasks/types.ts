@@ -53,6 +53,9 @@ export interface Dataset {
   testKeys: Set<string>;
   /** Grok match statistics (only when filters are set). */
   matchInfo?: { count: number; mode: "enumerated" | "sampled" };
+  /** Demonstration mode: `test` is a fixed, curated demo list (see
+   *  tasks/demos.ts). The loop iterates it instead of sampling. */
+  isDemo?: boolean;
 }
 
 export const TASK_SPECS: Record<Task, TaskSpec> = {

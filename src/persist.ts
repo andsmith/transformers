@@ -29,6 +29,8 @@ export interface ExperimentConfig {
   fixedLength: boolean;
   /** Added 0.0.32; older saves default to true (the prior behavior). */
   uniformLen?: boolean;
+  /** Added 0.0.44 (demonstration mode); older saves default to false. */
+  demoExamples?: boolean;
   /** Added 0.0.36 (parens options + grokking); older saves use defaults. */
   parensMaxDepth?: number;
   parensNoMixedNesting?: boolean;
@@ -74,6 +76,7 @@ export function buildSave(state: AppState, opts: SaveOptions): SaveFile {
     maxSeqLen: state.maxSeqLen,
     fixedLength: state.fixedLength,
     uniformLen: state.uniformLen,
+    demoExamples: state.demoExamples,
     parensMaxDepth: state.parensMaxDepth,
     parensNoMixedNesting: state.parensNoMixedNesting,
     parensDelims: state.parensDelims,
@@ -142,6 +145,7 @@ export function applySave(
   state.maxSeqLen = e.maxSeqLen;
   state.fixedLength = e.fixedLength;
   state.uniformLen = e.uniformLen ?? true;
+  state.demoExamples = e.demoExamples ?? false;
   state.parensMaxDepth = e.parensMaxDepth ?? Math.max(1, Math.floor(e.maxSeqLen / 2));
   state.parensNoMixedNesting = e.parensNoMixedNesting ?? false;
   state.parensDelims = e.parensDelims ?? 1;

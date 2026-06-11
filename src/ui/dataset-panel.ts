@@ -10,10 +10,11 @@
 import type { AppContext, DisplayMode } from "../state";
 import { maxNestingDepth, testSetMax, TRAIN_PER_EPOCH_MAX } from "../state";
 import type { Example } from "../tasks/types";
-import { isClassification } from "../tasks/types";
+import { isClassification, TASK_SPECS } from "../tasks/types";
 import type { TestEval } from "../training/loop";
 import { MAX_SEQ_LEN_LIMIT, sampleSpaceSize, SPACE_HUGE } from "../tasks/datasets";
 import { compileFilters, randomRegexes } from "../tasks/grok";
+import { prepareDemos, type PreparedDemo } from "../tasks/demos";
 import { tokenChar, tokenColor, MAX_VOCAB, maxDelims } from "../tasks/grammar";
 import {
   makeButton,
@@ -110,6 +111,16 @@ export function mountDatasetPanel(
   uniformLenCheck.el.title =
     "On: every length equally likely (short sequences over-represented). " +
     "Off: length ∝ |V|^L — uniform over the whole sample space.";
+
+  const demoCheck: Checkbox = makeCheckbox(
+    "Demo Examples",
+    ctx.state.demoExamples,
+    (c) => ctx.apply({ demoExamples: c }),
+  );
+  demoCheck.el.title =
+    "Swap the test set for a curated set of demonstration examples for this " +
+    "task — train on real data first, then step through these to see how the " +
+    "trained model works.";
 
   // --- task-dependent options (only parens for now) ---
   const delimSlider: Slider = makeSlider({
@@ -223,11 +234,80 @@ export function mountDatasetPanel(
   // --- Dataset frame: two sub-boxes ---
   const genBox = makeFieldset("Sequence options");
   genBox.classList.add("sub-box");
-  genBox.append(displayRadios.el, vocabRow, lenRow, uniformLenCheck.el, parensOptions);
+  genBox.append(
+    displayRadios.el,
+    vocabRow,
+    lenRow,
+    uniformLenCheck.el,
+    demoCheck.el,
+    parensOptions,
+  );
+
+  // --- demonstration controls: replace the "Test Set Options" body in demo
+  //     mode (selector, cycle buttons, name + description, Apply setup). ---
+  // Selected demo + prepared list are recomputed each update(); handlers read
+  // these panel-local snapshots.
+  let curPrepared: PreparedDemo[] = [];
+  let curSelIdx = 0;
+
+  function cycleDemo(dir: number): void {
+    const n = curPrepared.length;
+    if (n === 0) return;
+    ctx.apply({ demoIndex: (((curSelIdx + dir) % n) + n) % n });
+  }
+
+  const demoSelect = document.createElement("select");
+  demoSelect.className = "dropdown demo-select";
+  demoSelect.addEventListener("change", () =>
+    ctx.apply({ demoIndex: Number(demoSelect.value) }),
+  );
+  const demoPrev = makeButton("◀", () => cycleDemo(-1));
+  const demoNext = makeButton("▶", () => cycleDemo(1));
+  demoPrev.classList.add("btn-compact", "demo-cycle");
+  demoNext.classList.add("btn-compact", "demo-cycle");
+  const demoSelRow = document.createElement("div");
+  demoSelRow.className = "demo-select-row";
+  demoSelRow.append(demoPrev, demoSelect, demoNext);
+
+  const demoName = document.createElement("div");
+  demoName.className = "demo-name";
+  const demoDesc = document.createElement("div");
+  demoDesc.className = "demo-desc";
+  const demoHint = document.createElement("div");
+  demoHint.className = "demo-hint";
+
+  const applySetupBtn = makeButton("Apply setup", () => {
+    const sel = curPrepared[curSelIdx];
+    if (sel?.setup) ctx.apply({ ...sel.setup });
+  });
+  applySetupBtn.classList.add("btn-compact", "apply-setup-btn");
+  applySetupBtn.title =
+    "Reconfigure the model to the settings this demo is designed for " +
+    "(resets training — then train and step through).";
+  const demoUpdateCheck: Checkbox = makeCheckbox(
+    "Update weights",
+    ctx.state.demoUpdateWeights,
+    (c) => ctx.apply({ demoUpdateWeights: c }),
+  );
+  demoUpdateCheck.el.title =
+    "Off: stepping shows the forward + gradient sweep but leaves the trained " +
+    "weights unchanged (inspection). On: the demos are used as training data.";
+  const demoActions = document.createElement("div");
+  demoActions.className = "demo-actions";
+  demoActions.append(applySetupBtn, demoUpdateCheck.el);
+
+  const demoControls = document.createElement("div");
+  demoControls.className = "demo-controls";
+  demoControls.append(demoSelRow, demoName, demoDesc, demoHint, demoActions);
+
+  const normalControls = document.createElement("div");
+  normalControls.className = "size-controls";
+  normalControls.append(trainSlider.el, testSlider.el, spaceHint, regenRow);
 
   const sizeBox = makeFieldset("Test Set Options");
   sizeBox.classList.add("sub-box");
-  sizeBox.append(trainSlider.el, testSlider.el, spaceHint, regenRow);
+  const sizeTitle = sizeBox.querySelector(".fieldset-title") as HTMLElement;
+  sizeBox.append(normalControls, demoControls);
 
   const controls = document.createElement("div");
   controls.className = "dataset-controls";
@@ -455,10 +535,94 @@ export function mountDatasetPanel(
     examplesEl.appendChild(frag);
   }
 
+  /** Render the demo set in authored order: all demos (valid + greyed invalid),
+   *  the selected one highlighted, valid ones carrying the latest eval marks. */
+  function renderDemoList(list: PreparedDemo[], selIdx: number): void {
+    const classification = isClassification(ctx.state.task);
+    const frag = document.createDocumentFragment();
+    const evalMap = new Map<number, TestEval>();
+    for (const e of viewEval ?? []) evalMap.set(e.index, e);
+    const haveEval = evalMap.size > 0;
+    const showHat = outMode === "yhat" && haveEval;
+
+    const maxInLen = list.reduce((m, d) => Math.max(m, d.input.length), 1);
+    const perTok = ctx.state.display === "squares" ? 16 : 14;
+    const inColW = `${maxInLen * perTok}px`;
+
+    const head = document.createElement("div");
+    head.className = "examples-header";
+    const headIdx = document.createElement("span");
+    headIdx.className = "ex-index";
+    const headIn = document.createElement("span");
+    headIn.textContent = "Input";
+    headIn.style.minWidth = inColW;
+    head.append(headIdx, headIn);
+    const headOut = document.createElement("span");
+    headOut.textContent = showHat ? "ŷ" : "Output";
+    if (classification) {
+      headOut.className = "head-right";
+      head.append(headOut);
+    } else {
+      const headArrow = document.createElement("span");
+      headArrow.className = "arrow";
+      headArrow.textContent = "→";
+      head.append(headArrow, headOut);
+    }
+    frag.appendChild(head);
+
+    list.forEach((d, i) => {
+      const rowEl = document.createElement("div");
+      rowEl.className = "example-row demo-row";
+      if (i === selIdx) rowEl.classList.add("selected");
+      if (!d.valid) rowEl.classList.add("invalid");
+      rowEl.title = d.valid ? d.name : `${d.name} — ${d.hint}`;
+      rowEl.addEventListener("click", () => ctx.apply({ demoIndex: d.index }));
+
+      const ev = d.valid ? evalMap.get(d.index) : undefined;
+      const idx = document.createElement("span");
+      idx.className = "ex-index";
+      if (ev) idx.classList.add(ev.wrong === 0 ? "all-right" : "has-wrong");
+      idx.textContent = `#${d.index}`;
+      const inSeq = renderSeq(d.input);
+      inSeq.style.minWidth = inColW;
+      rowEl.append(idx, inSeq);
+
+      if (!d.valid) {
+        const tag = document.createElement("span");
+        tag.className = "demo-invalid-tag";
+        tag.textContent = d.hint;
+        rowEl.append(tag);
+      } else if (classification) {
+        const trueLabel = d.output[0] === 1;
+        const showLabel = showHat && ev ? ev.pred[0] === 1 : trueLabel;
+        const tag = document.createElement("span");
+        const ok = ev ? ev.correct[0] : true;
+        tag.className =
+          `class-tag ${showLabel ? "balanced" : "unbalanced"}` +
+          (ev ? (ok ? " ok" : " bad") : "");
+        tag.textContent =
+          (showLabel ? "balanced" : "unbalanced") + (ev ? (ok ? " ✓" : " ✗") : "");
+        if (ev) tag.title = `p(true)=${ev.pTrue[0].toFixed(2)}`;
+        rowEl.append(tag);
+      } else {
+        const arrow = document.createElement("span");
+        arrow.className = "arrow";
+        arrow.textContent = "→";
+        const outIds = showHat && ev ? ev.pred : d.output;
+        const marks = ev ? ev.correct.map((c) => !c) : undefined;
+        rowEl.append(arrow, renderSeq(outIds, marks, ev?.pTrue));
+      }
+      frag.appendChild(rowEl);
+    });
+    examplesEl.innerHTML = "";
+    examplesEl.appendChild(frag);
+  }
+
   // The example list can be large (up to 5000 rows), so only rebuild it when
   // something that affects it actually changes.
   let lastDataset = ctx.state.dataset;
   let lastListKey = "";
+  let lastDemoOptKey = "";
 
   function update(): void {
     const s = ctx.state;
@@ -467,6 +631,8 @@ export function mountDatasetPanel(
     lenSlider.set(s.minSeqLen, s.maxSeqLen);
     fixedLenCheck.set(s.fixedLength);
     uniformLenCheck.set(s.uniformLen);
+    demoCheck.set(s.demoExamples);
+    demoUpdateCheck.set(s.demoUpdateWeights);
     trainSlider.set(s.trainPerEpoch);
 
     // Parens options: visible only for the parens task; maxes follow vocab/length.
@@ -521,6 +687,49 @@ export function mountDatasetPanel(
     randomCheck.set(s.randomSeed);
     renderVocab();
 
+    // --- demonstration mode: retitle + swap the Test-Set-Options body ---
+    const demoMode = s.demoExamples;
+    sizeTitle.textContent = demoMode
+      ? `DEMONSTRATION – ${TASK_SPECS[s.task].label}`
+      : "Test Set Options";
+    normalControls.style.display = demoMode ? "none" : "";
+    demoControls.style.display = demoMode ? "" : "none";
+    grokRow.style.display = demoMode ? "none" : "";
+    grokStatus.style.display = demoMode ? "none" : "";
+
+    if (demoMode) {
+      curPrepared = prepareDemos(s.task, {
+        numSymbols: s.numSymbols,
+        parensDelims: s.parensDelims,
+        maxSeqLen: s.maxSeqLen,
+      });
+      curSelIdx = Math.min(Math.max(0, s.demoIndex), Math.max(0, curPrepared.length - 1));
+      // Rebuild the <select> options when the task / validity set changes.
+      const optKey = `${s.task}|${curPrepared.map((d) => (d.valid ? "1" : "0")).join("")}`;
+      if (optKey !== lastDemoOptKey) {
+        demoSelect.innerHTML = "";
+        for (const d of curPrepared) {
+          const o = document.createElement("option");
+          o.value = String(d.index);
+          o.textContent = d.valid ? d.name : `⚠ ${d.name}`;
+          demoSelect.appendChild(o);
+        }
+        lastDemoOptKey = optKey;
+      }
+      const sel = curPrepared[curSelIdx];
+      if (sel) {
+        if (document.activeElement !== demoSelect) demoSelect.value = String(sel.index);
+        demoName.textContent = sel.name;
+        demoDesc.textContent = sel.description;
+        demoHint.textContent = sel.valid ? "" : sel.hint;
+        demoHint.style.display = sel.valid ? "none" : "";
+        applySetupBtn.style.display = sel.setup ? "" : "none";
+      }
+    } else {
+      curPrepared = [];
+      curSelIdx = 0;
+    }
+
     // Dataset rebuilt (new test set) → reset the view to live/index order.
     if (s.dataset !== lastDataset) {
       frozen = false;
@@ -535,10 +744,11 @@ export function mountDatasetPanel(
 
     const haveEval = !!viewEval;
     const liveHaveEval = !!s.loop.lastTestEval;
-    // input sort needs no eval; wrong/first/out do.
-    inputBtn.disabled = false;
-    wrongBtn.disabled = !haveEval;
-    firstBtn.disabled = !haveEval;
+    // input sort needs no eval; wrong/first/out do. Demos render in authored
+    // order (no sorting), so only the y/ŷ toggle stays live in demo mode.
+    inputBtn.disabled = demoMode;
+    wrongBtn.disabled = demoMode || !haveEval;
+    firstBtn.disabled = demoMode || !haveEval;
     outBtn.disabled = !haveEval;
     const arrow = (k: typeof sortKey) =>
       sortKey === k ? (sortDir === -1 ? " ▼" : " ▲") : "";
@@ -551,7 +761,7 @@ export function mountDatasetPanel(
     outBtn.textContent = outMode === "yhat" ? "out: ŷ" : "out: y";
 
     // Title: TEST SET (N% correct) - eval @ epoch E  /  - no eval yet
-    let titleStr = "Test Set";
+    let titleStr = demoMode ? "Demonstration Set" : "Test Set";
     if (haveEval && viewEval) {
       const correct = viewEval.filter((e) => e.wrong === 0).length;
       const pctCorrect = Math.round((correct / viewEval.length) * 100);
@@ -566,11 +776,20 @@ export function mountDatasetPanel(
     refreshBtn.disabled = !stale;
     refreshBtn.classList.toggle("stale", stale);
 
-    const listKey = `${s.display}|${sortKey ?? ""}|${sortDir}|${outMode}|${viewEvalEpoch}`;
-    if (s.dataset !== lastDataset || listKey !== lastListKey) {
-      renderList(s.dataset.test);
-      lastDataset = s.dataset;
-      lastListKey = listKey;
+    if (demoMode) {
+      const demoKey = `demo|${s.display}|${s.task}|${s.numSymbols}|${s.parensDelims}|${s.maxSeqLen}|${curSelIdx}|${outMode}|${viewEvalEpoch}`;
+      if (s.dataset !== lastDataset || demoKey !== lastListKey) {
+        renderDemoList(curPrepared, curSelIdx);
+        lastDataset = s.dataset;
+        lastListKey = demoKey;
+      }
+    } else {
+      const listKey = `${s.display}|${sortKey ?? ""}|${sortDir}|${outMode}|${viewEvalEpoch}`;
+      if (s.dataset !== lastDataset || listKey !== lastListKey) {
+        renderList(s.dataset.test);
+        lastDataset = s.dataset;
+        lastListKey = listKey;
+      }
     }
   }
 

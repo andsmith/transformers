@@ -134,6 +134,14 @@ export class TrainingLoop {
   /** In-progress per-stage walkthrough (null between samples). */
   staged: StagedSample | null = null;
 
+  // --- demonstration mode (only when this.data.isDemo) ---
+  /** Position in the demo list the interactive "1 layer" step re-runs. */
+  selectedDemo = 0;
+  /** Position the bulk run/epoch/iteration paths cycle through. */
+  private demoCursor = 0;
+  /** When true (demo inspection), forward+backward run but weights don't step. */
+  freezeWeights = false;
+
   constructor(
     private readonly model: FastModel,
     private readonly optim: FastSGD,
@@ -158,12 +166,30 @@ export class TrainingLoop {
    * RNG, so a restored save reproduces the exact same training stream.
    */
   private nextSample(): Example {
+    // Demo mode: cycle the fixed list (bulk run / epoch / iteration paths).
+    if (this.data.isDemo && this.data.test.length > 0) {
+      const ex = this.data.test[this.demoCursor % this.data.test.length];
+      this.demoCursor++;
+      return ex;
+    }
     return generateTrainExample(this.data, this.rng, this.iteration, this.rejCounter);
   }
 
   /** Test-set hits while sampling the epoch in progress. */
   get rejectionsThisEpoch(): number {
     return this.rejCounter.rejections;
+  }
+
+  /**
+   * Point demo stepping at a position in the demo list: the interactive "1
+   * layer" step re-runs it, and bulk run/epoch resumes from there.
+   */
+  setDemoPosition(pos: number): void {
+    const n = this.data.test.length;
+    if (n === 0) return;
+    const p = ((pos % n) + n) % n;
+    this.selectedDemo = p;
+    this.demoCursor = p;
   }
 
   /** Capture continuation state (histories, counters, RNG). */
@@ -362,7 +388,12 @@ export class TrainingLoop {
    */
   stepLayer(): void {
     if (!this.staged || this.staged.phase === "complete") {
-      const sample = this.nextSample();
+      // Demo mode: "1 layer" re-runs the SELECTED demo (study one example),
+      // rather than advancing the cursor — so repeated stepping stays on it.
+      const sample =
+        this.data.isDemo && this.data.test.length > 0
+          ? this.data.test[this.selectedDemo % this.data.test.length]
+          : this.nextSample();
       const trace = this.model.forward(sample.input);
       const lossValue = this.model.computeLoss(trace, sample);
       this.model.zeroGrad();
@@ -392,7 +423,8 @@ export class TrainingLoop {
 
     // Backward sweep complete: apply the update, log the loss, and start the
     // next sample in the same click so stepping never feels like a no-op.
-    this.optim.step();
+    // Demo inspection (freezeWeights) shows the ∇ sweep but leaves weights put.
+    if (!this.freezeWeights) this.optim.step();
     this.finishSample(st.lossValue);
     this.staged = null;
     this.stepLayer();
@@ -413,7 +445,7 @@ export class TrainingLoop {
     const lossValue = this.model.computeLoss(trace, sample);
     this.model.zeroGrad();
     this.model.backward(trace);
-    this.optim.step();
+    if (!this.freezeWeights) this.optim.step();
     if (snapshot || this.cursor === this.trainPerEpoch - 1) {
       this.staged = {
         sample,

@@ -921,6 +921,85 @@ body.resizing {
   outline: 1.5px solid #e0413a;
 }
 
+/* ---- demonstration mode ---- */
+.demo-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.demo-select-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.demo-select {
+  flex: 1;
+  min-width: 0;
+}
+
+.demo-cycle {
+  padding: 4px 8px;
+  background: #fff;
+  color: var(--ink);
+  border-color: var(--line);
+}
+
+.demo-name {
+  font-weight: 600;
+  font-size: calc(var(--ui-font-px) + 1px);
+}
+
+.demo-desc {
+  font-size: calc(var(--ui-font-px) - 1px);
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.demo-hint {
+  font-size: calc(var(--ui-font-px) - 1px);
+  color: #a13a2a;
+}
+
+.demo-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 2px;
+}
+
+.apply-setup-btn {
+  white-space: nowrap;
+}
+
+/* Rows in the demo list: clickable, selectable, greyed when they don't fit. */
+.demo-row {
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  padding-left: 4px;
+}
+
+.demo-row:hover {
+  background: #f4f7fb;
+}
+
+.demo-row.selected {
+  background: #eef4ff;
+  border-left-color: var(--accent);
+}
+
+.demo-row.invalid {
+  opacity: 0.5;
+}
+
+.demo-invalid-tag {
+  margin-left: auto;
+  font-size: calc(var(--ui-font-px) - 2px);
+  font-style: italic;
+  color: var(--muted);
+}
+
 /* ---- center / network view ---- */
 .network-view {
   grid-area: center;

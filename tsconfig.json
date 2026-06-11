@@ -18,5 +18,5 @@
     "allowImportingTsExtensions": false,
     "noEmit": true
   },
-  "include": ["src"]
+  "include": ["src", "demo_tasks.json"]
 }

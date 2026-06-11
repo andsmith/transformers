@@ -1,0 +1,183 @@
+[
+  {
+    "task": "copy",
+    "demos": [
+      {
+        "name": "Identity, short",
+        "description": "The simplest copy. With one-hot tokens and one-hot positions, the attention matrix should be (near) the IDENTITY: every position attends to itself, and W_V routes each token id straight to the matching output logit. Run in '1 layer' mode and watch the attention diagonal light up, then the residual carry the token through.",
+        "input": "abca",
+        "output": "abca",
+        "setup": { "numSymbols": 4, "tokenOneHot": true, "peScheme": "onehot", "minSeqLen": 3, "maxSeqLen": 6 }
+      },
+      {
+        "name": "All same token",
+        "description": "Every position holds the same symbol. Copy doesn't depend on the tokens being distinct — the positions still are. The attention diagonal and the W_V readout look identical to the mixed-token case; only the 'what' wire changed.",
+        "input": "aaaa",
+        "output": "aaaa",
+        "setup": { "numSymbols": 4, "tokenOneHot": true, "peScheme": "onehot", "minSeqLen": 3, "maxSeqLen": 6 }
+      },
+      {
+        "name": "Full vocab once",
+        "description": "Each symbol of the vocabulary appears exactly once. This is the cleanest view of W_V as a token→logit lookup table: with one-hot tokens, column k of the value/output path is just 'how to emit symbol k'.",
+        "input": "abcd",
+        "output": "abcd",
+        "setup": { "numSymbols": 4, "tokenOneHot": true, "peScheme": "onehot", "minSeqLen": 3, "maxSeqLen": 6 }
+      },
+      {
+        "name": "Longer run",
+        "description": "A repeated pattern across six positions. Identity attention still copies each slot independently — repetition in the input doesn't confuse a position-addressed copy. Compare the attention map to the short example: same diagonal, more rows.",
+        "input": "abcabc",
+        "output": "abcabc",
+        "setup": { "numSymbols": 3, "tokenOneHot": true, "peScheme": "onehot", "minSeqLen": 3, "maxSeqLen": 6 }
+      },
+      {
+        "name": "Two symbols alternating",
+        "description": "A minimal vocabulary (|V|=2). Copy here is purely about positional addressing, not content — there are only two possible tokens, so the work is entirely 'attend to my own slot'. Good contrast with the Sort/Reverse demos on the same vocab.",
+        "input": "abab",
+        "output": "abab",
+        "setup": { "numSymbols": 2, "tokenOneHot": true, "peScheme": "onehot", "minSeqLen": 2, "maxSeqLen": 6 }
+      }
+    ]
+  },
+  {
+    "task": "reverse",
+    "demos": [
+      {
+        "name": "Reverse, short",
+        "description": "The headline one-hot demo. With one-hot positions, reverse needs each position i to attend to position n-1-i — so W_Q/W_K's POSITION block should form the ANTI-diagonal. Run in '1 layer' mode and watch the attention matrix become the anti-diagonal (top-right to bottom-left).",
+        "input": "abc",
+        "output": "cba",
+        "setup": { "numSymbols": 4, "tokenOneHot": true, "peScheme": "onehot", "minSeqLen": 3, "maxSeqLen": 6 }
+      },
+      {
+        "name": "Palindrome",
+        "description": "The input equals its own reverse, so the OUTPUT looks identical to the input — but the mechanism is still the anti-diagonal attention, not a copy. A great reminder that the same output can come from a very different circuit: inspect the attention map to tell reverse from copy.",
+        "input": "aba",
+        "output": "aba",
+        "setup": { "numSymbols": 4, "tokenOneHot": true, "peScheme": "onehot", "minSeqLen": 3, "maxSeqLen": 6 }
+      },
+      {
+        "name": "Even length",
+        "description": "An even-length sequence has no fixed center element — every position swaps with a distinct partner. The anti-diagonal is perfectly off-center here; compare to the odd-length 'Reverse, short' where the middle position attends to itself.",
+        "input": "abcd",
+        "output": "dcba",
+        "setup": { "numSymbols": 4, "tokenOneHot": true, "peScheme": "onehot", "minSeqLen": 3, "maxSeqLen": 6 }
+      },
+      {
+        "name": "Distinct five",
+        "description": "Five unique symbols (|V|=5), so each output position has an unambiguous source. The clearest readout that position i is pulling its value from position n-1-i — trace one output token back through the attention to its mirror.",
+        "input": "abcde",
+        "output": "edcba",
+        "setup": { "numSymbols": 5, "tokenOneHot": true, "peScheme": "onehot", "minSeqLen": 3, "maxSeqLen": 6 }
+      },
+      {
+        "name": "Blocks reversed",
+        "description": "Runs of repeated tokens reversed as blocks. With duplicate tokens the OUTPUT order of identical symbols is fixed by POSITION, not content — the anti-diagonal handles it the same way regardless of repeats.",
+        "input": "aabbcc",
+        "output": "ccbbaa",
+        "setup": { "numSymbols": 3, "tokenOneHot": true, "peScheme": "onehot", "minSeqLen": 3, "maxSeqLen": 6 }
+      }
+    ]
+  },
+  {
+    "task": "sort",
+    "demos": [
+      {
+        "name": "Already sorted",
+        "description": "A baseline: the input is already ascending, so sort behaves like copy here. Useful to see what 'correct with no work' looks like before the harder permutations. (A single attention head can only approximate true sorting — watch where it attends rather than expecting perfection.)",
+        "input": "abc",
+        "output": "abc",
+        "setup": { "numSymbols": 3, "tokenOneHot": true, "peScheme": "onehot", "minSeqLen": 2, "maxSeqLen": 6 }
+      },
+      {
+        "name": "Reverse sorted",
+        "description": "The hardest small case: a fully descending input must become fully ascending — every element moves. With one-hot tokens the head can route by token IDENTITY (e.g. the output's first slot gathers the smallest symbol). Watch which token each output position attends to.",
+        "input": "cba",
+        "output": "abc",
+        "setup": { "numSymbols": 3, "tokenOneHot": true, "peScheme": "onehot", "minSeqLen": 2, "maxSeqLen": 6 }
+      },
+      {
+        "name": "Two values",
+        "description": "Sorting a binary sequence is just PARTITION: all a's then all b's. With one-hot tokens, attention can group positions by token identity — the cleanest demonstration of identity-based routing. Compare the attention to the Copy 'two alternating' demo on the same vocab.",
+        "input": "bbaa",
+        "output": "aabb",
+        "setup": { "numSymbols": 2, "tokenOneHot": true, "peScheme": "onehot", "minSeqLen": 2, "maxSeqLen": 6 }
+      },
+      {
+        "name": "Duplicates",
+        "description": "Equal counts of two symbols, interleaved. The output is a count-and-emit: two a's, then two b's. Stable, content-based grouping — position no longer determines the answer, the token tallies do.",
+        "input": "baba",
+        "output": "aabb",
+        "setup": { "numSymbols": 2, "tokenOneHot": true, "peScheme": "onehot", "minSeqLen": 2, "maxSeqLen": 6 }
+      },
+      {
+        "name": "Three distinct",
+        "description": "The smallest permutation that moves all three elements (c,a,b → a,b,c). A compact view of every kind of move at once; trace each output token to the input token it gathered.",
+        "input": "cab",
+        "output": "abc",
+        "setup": { "numSymbols": 3, "tokenOneHot": true, "peScheme": "onehot", "minSeqLen": 2, "maxSeqLen": 6 }
+      },
+      {
+        "name": "Histogram",
+        "description": "Two of each symbol in scrambled order → sorted runs aabbcc. The output is literally the histogram of the input read out in order. The strongest test that the head is counting token identities, not exploiting position.",
+        "input": "cbacba",
+        "output": "aabbcc",
+        "setup": { "numSymbols": 3, "tokenOneHot": true, "peScheme": "onehot", "minSeqLen": 3, "maxSeqLen": 6 }
+      }
+    ]
+  },
+  {
+    "task": "parens",
+    "demos": [
+      {
+        "name": "Balanced pair",
+        "description": "The simplest balanced string. Parens mean-pools across positions then applies a sigmoid, so the model can learn to COUNT: opens minus closes. Here the count is zero → balanced. Watch the pooled vector and the single output logit.",
+        "input": "()",
+        "output": "balanced",
+        "setup": { "numSymbols": 2, "parensDelims": 1, "tokenOneHot": true, "peScheme": "onehot", "minSeqLen": 2, "maxSeqLen": 6 }
+      },
+      {
+        "name": "Unbalanced (extra open)",
+        "description": "One unmatched open. The open/close counts differ by one → unbalanced. A pure counter handles this correctly; contrast it with 'Wrong order' where counting alone is fooled.",
+        "input": "(()",
+        "output": "unbalanced",
+        "setup": { "numSymbols": 2, "parensDelims": 1, "tokenOneHot": true, "peScheme": "onehot", "minSeqLen": 2, "maxSeqLen": 6 }
+      },
+      {
+        "name": "Nested",
+        "description": "Depth-2 nesting that is still balanced. Counts match (two opens, two closes) and the order is valid. A counter gets this right; the interesting failures come next.",
+        "input": "(())",
+        "output": "balanced",
+        "setup": { "numSymbols": 2, "parensDelims": 1, "tokenOneHot": true, "peScheme": "onehot", "minSeqLen": 2, "maxSeqLen": 6 }
+      },
+      {
+        "name": "Wrong order (fools a counter)",
+        "description": "FAILURE-MODE demo. ')(' has equal opens and closes — a model that only counts will call it BALANCED, but it isn't (a close precedes its open). If your trained model says balanced here, it learned to count, not to match. Order requires position-aware processing.",
+        "input": ")(",
+        "output": "unbalanced",
+        "setup": { "numSymbols": 2, "parensDelims": 1, "tokenOneHot": true, "peScheme": "onehot", "minSeqLen": 2, "maxSeqLen": 6 }
+      },
+      {
+        "name": "With distractor",
+        "description": "A distractor symbol ('.') must be IGNORED for the balance decision. The model has to learn that this token carries no open/close weight — inspect whether its pooled contribution is near zero.",
+        "input": "(.)",
+        "output": "balanced",
+        "setup": { "numSymbols": 3, "parensDelims": 1, "tokenOneHot": true, "peScheme": "onehot", "minSeqLen": 2, "maxSeqLen": 6 }
+      },
+      {
+        "name": "Two kinds, matched",
+        "description": "Two delimiter kinds, correctly nested: '([])'. Now counting per kind isn't enough by itself — the types must nest properly. A balanced cross-type example to pair with the mismatch below.",
+        "input": "([])",
+        "output": "balanced",
+        "setup": { "numSymbols": 4, "parensDelims": 2, "tokenOneHot": true, "peScheme": "onehot", "minSeqLen": 2, "maxSeqLen": 6 }
+      },
+      {
+        "name": "Two kinds, interleaved",
+        "description": "FAILURE-MODE demo. '([)]' has matching counts of every kind, yet it is UNBALANCED because the types interleave. Per-type counting says balanced; only order-and-type-aware matching gets it right. The clearest limit of a shallow counter.",
+        "input": "([)]",
+        "output": "unbalanced",
+        "setup": { "numSymbols": 4, "parensDelims": 2, "tokenOneHot": true, "peScheme": "onehot", "minSeqLen": 2, "maxSeqLen": 6 }
+      }
+    ]
+  }
+]

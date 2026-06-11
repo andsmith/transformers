@@ -5,6 +5,7 @@
  */
 
 import { generateTestSet, sampleSpaceSize, SPACE_HUGE } from "./tasks/datasets";
+import { buildDemoDataset } from "./tasks/demos";
 import { compileFilters } from "./tasks/grok";
 import type { Dataset, Task } from "./tasks/types";
 import type { PEScheme } from "./model/embeddings";
@@ -46,6 +47,10 @@ export interface AppState {
   maxSeqLen: number; // longest generated sequence
   fixedLength: boolean; // if true, every sequence is exactly maxSeqLen
   uniformLen: boolean; // length prior: equal-per-length vs ∝ V^L
+  // --- demonstration mode ---
+  demoExamples: boolean; // swap the test set for the curated demo set
+  demoIndex: number; // selected demo (index into the task's authored list)
+  demoUpdateWeights: boolean; // demo stepping updates weights (off = frozen)
   // --- task-dependent generation options ---
   parensMaxDepth: number; // parens: max nesting depth
   parensNoMixedNesting: boolean; // parens: no mixed delimiter types per nest
@@ -117,6 +122,7 @@ export interface Defaults {
   maxSeqLen: number;
   fixedLength: boolean;
   uniformLen: boolean;
+  demoExamples: boolean;
   parensMaxDepth: number;
   parensNoMixedNesting: boolean;
   parensDelims: number;
@@ -137,6 +143,7 @@ const DEFAULTS: Defaults = {
   maxSeqLen: 7,
   fixedLength: false,
   uniformLen: true,
+  demoExamples: false,
   parensMaxDepth: 3,
   parensNoMixedNesting: false,
   parensDelims: 1,
@@ -156,11 +163,31 @@ export interface GenStateSlice {
   maxSeqLen: number;
   fixedLength: boolean;
   uniformLen: boolean;
+  demoExamples: boolean;
   parensMaxDepth: number;
   parensNoMixedNesting: boolean;
   parensDelims: number;
   grokFilters: string;
   seed: number;
+}
+
+/**
+ * Samples per epoch for the training loop: in demo mode an epoch is one pass
+ * over the (valid) demo set; otherwise the clamped on-the-fly count.
+ */
+export function loopTrainPerEpoch(
+  state: {
+    demoExamples: boolean;
+    numSymbols: number;
+    minSeqLen: number;
+    maxSeqLen: number;
+    fixedLength: boolean;
+    trainPerEpoch: number;
+  },
+  dataset: Dataset,
+): number {
+  if (state.demoExamples) return Math.max(1, dataset.test.length);
+  return effectiveTrainPerEpoch(state, dataset.test.length);
 }
 
 /**
@@ -192,6 +219,7 @@ export function testSetMax(s: {
 
 /** Generate just the (test) dataset from the current settings. */
 export function rebuildDataset(state: GenStateSlice): Dataset {
+  if (state.demoExamples) return buildDemoDataset(state);
   const maxLen = state.maxSeqLen;
   const minLen = state.fixedLength ? maxLen : Math.min(state.minSeqLen, maxLen);
   const { regexes } = compileFilters(state.grokFilters);
@@ -273,7 +301,7 @@ export function rebuild(state: GenStateSlice & {
     optim,
     dataset,
     new Rng(state.seed ^ 0x51ed270b),
-    effectiveTrainPerEpoch(state, dataset.test.length),
+    loopTrainPerEpoch(state, dataset),
   );
 
   return { dataset, model, optim, loop };
@@ -285,6 +313,8 @@ export function createInitialState(): AppState {
   return {
     ...DEFAULTS,
     numHeads: 1,
+    demoIndex: 0,
+    demoUpdateWeights: false,
     stepGranularity: "layer",
     running: false,
     speed: 100,
