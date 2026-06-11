@@ -299,13 +299,16 @@ export function mountDatasetPanel(
   // Train the configured model on a real generated set (resembling the demos),
   // then click again to stop and run the curated examples.
   const trainDemoBtn = makeButton("▶ Train demo model", () => {
-    ctx.apply({ demoTraining: !ctx.state.demoTraining, running: true });
+    // Start training => run on real data; stop => halt and return to the demos
+    // (so the user can step through them). running follows the train state.
+    const on = !ctx.state.demoTraining;
+    ctx.apply({ demoTraining: on, running: on });
   });
   trainDemoBtn.classList.add("train-demo-btn");
   trainDemoBtn.title =
     "Train this model on a real, generated training set that resembles the " +
     "demos (runs in the current run mode, showing test errors normally). " +
-    "Click again to stop training and run the demo examples.";
+    "Click again to stop and return to the demo examples (then Step/Go through them).";
 
   const demoControls = document.createElement("div");
   demoControls.className = "demo-controls";
@@ -710,7 +713,7 @@ export function mountDatasetPanel(
     demoControls.style.display = demoMode ? "" : "none";
     grokRow.style.display = demoMode ? "none" : "";
     grokStatus.style.display = demoMode ? "none" : "";
-    trainDemoBtn.textContent = s.demoTraining ? "■ Stop & run demos" : "▶ Train demo model";
+    trainDemoBtn.textContent = s.demoTraining ? "■ Stop training" : "▶ Train demo model";
     trainDemoBtn.classList.toggle("training", s.demoTraining);
 
     if (demoMode) {
