@@ -51,6 +51,7 @@ export interface AppState {
   demoExamples: boolean; // swap the test set for the curated demo set
   demoIndex: number; // selected demo (index into the task's authored list)
   demoUpdateWeights: boolean; // demo stepping updates weights (off = frozen)
+  demoTraining: boolean; // temporarily train on a real set (vs run the demos)
   // --- task-dependent generation options ---
   parensMaxDepth: number; // parens: max nesting depth
   parensNoMixedNesting: boolean; // parens: no mixed delimiter types per nest
@@ -164,6 +165,7 @@ export interface GenStateSlice {
   fixedLength: boolean;
   uniformLen: boolean;
   demoExamples: boolean;
+  demoTraining: boolean;
   parensMaxDepth: number;
   parensNoMixedNesting: boolean;
   parensDelims: number;
@@ -171,13 +173,21 @@ export interface GenStateSlice {
   seed: number;
 }
 
+/** True when the panel is actually showing/running the curated demo set (demo
+ *  mode AND not in the temporary "train on real data" sub-phase). */
+export function showingDemos(state: { demoExamples: boolean; demoTraining: boolean }): boolean {
+  return state.demoExamples && !state.demoTraining;
+}
+
 /**
- * Samples per epoch for the training loop: in demo mode an epoch is one pass
- * over the (valid) demo set; otherwise the clamped on-the-fly count.
+ * Samples per epoch for the training loop: when running the demo set an epoch
+ * is one pass over the (valid) demos; otherwise the clamped on-the-fly count
+ * (including the "train demo model" sub-phase, which uses real data).
  */
 export function loopTrainPerEpoch(
   state: {
     demoExamples: boolean;
+    demoTraining: boolean;
     numSymbols: number;
     minSeqLen: number;
     maxSeqLen: number;
@@ -186,7 +196,7 @@ export function loopTrainPerEpoch(
   },
   dataset: Dataset,
 ): number {
-  if (state.demoExamples) return Math.max(1, dataset.test.length);
+  if (showingDemos(state)) return Math.max(1, dataset.test.length);
   return effectiveTrainPerEpoch(state, dataset.test.length);
 }
 
@@ -219,7 +229,9 @@ export function testSetMax(s: {
 
 /** Generate just the (test) dataset from the current settings. */
 export function rebuildDataset(state: GenStateSlice): Dataset {
-  if (state.demoExamples) return buildDemoDataset(state);
+  // Demo mode shows the curated set — except while "Train demo model" is on,
+  // where we generate a normal set (same config) to actually learn the task.
+  if (showingDemos(state)) return buildDemoDataset(state);
   const maxLen = state.maxSeqLen;
   const minLen = state.fixedLength ? maxLen : Math.min(state.minSeqLen, maxLen);
   const { regexes } = compileFilters(state.grokFilters);
@@ -309,12 +321,13 @@ export function rebuild(state: GenStateSlice & {
 
 export function createInitialState(): AppState {
   const seed = 1;
-  const built = rebuild({ ...DEFAULTS, seed });
+  const built = rebuild({ ...DEFAULTS, seed, demoTraining: false });
   return {
     ...DEFAULTS,
     numHeads: 1,
     demoIndex: 0,
     demoUpdateWeights: false,
+    demoTraining: false,
     stepGranularity: "layer",
     running: false,
     speed: 100,

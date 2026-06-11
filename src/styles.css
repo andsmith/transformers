@@ -973,6 +973,20 @@ body.resizing {
   white-space: nowrap;
 }
 
+/* Train-on-real-data toggle: green to start training, red to stop and run. */
+.train-demo-btn {
+  margin-top: 2px;
+  background: #2fbf71;
+  border-color: #2fbf71;
+  color: #fff;
+  font-weight: 600;
+}
+
+.train-demo-btn.training {
+  background: #e0413a;
+  border-color: #e0413a;
+}
+
 /* Rows in the demo list: clickable, selectable, greyed when they don't fit. */
 .demo-row {
   cursor: pointer;

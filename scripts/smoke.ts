@@ -17,6 +17,7 @@ import {
 } from "../src/tasks/datasets";
 import { compileFilters, enumerateMatches, inputToGlyphs, matchesAny } from "../src/tasks/grok";
 import { demosForTask, glyphsToIds, buildDemoDataset } from "../src/tasks/demos";
+import { showingDemos } from "../src/state";
 import { isBalanced, parensRoles } from "../src/tasks/grammar";
 import { TransformerModel } from "../src/model/transformer";
 import { crossEntropy, sum } from "../src/engine/ops";
@@ -658,6 +659,15 @@ function build(
   if (loop.staged?.sample.index !== ds.test[pick].index)
     throw new Error("stepLayer should run the selected demo");
   console.log(`demo loop: isDemo set, ${ds.test.length} demos, freeze respected, selected #${ds.test[pick].index} OK`);
+
+  // "Train demo model" flips the data source: demos when off, real data when on.
+  if (showingDemos({ demoExamples: true, demoTraining: false }) !== true)
+    throw new Error("demoExamples on, training off → should show demos");
+  if (showingDemos({ demoExamples: true, demoTraining: true }) !== false)
+    throw new Error("train-demo phase → should NOT show demos (real data)");
+  if (showingDemos({ demoExamples: false, demoTraining: false }) !== false)
+    throw new Error("demo mode off → never shows demos");
+  console.log("train-demo toggle: data-source truth table OK");
 }
 
 console.log("SMOKE OK");

@@ -54,6 +54,7 @@ const DATA_ONLY_KEYS = new Set<keyof AppState>([
   "trainPerEpoch",
   "testSetSize",
   "demoExamples",
+  "demoTraining",
 ]);
 
 /** Per-frame time budget (ms) for continuous "run" mode — scalar-autograd
@@ -209,10 +210,12 @@ window.addEventListener("DOMContentLoaded", () => {
   }
 
   /** Point the (current) loop at the demo set per state, and freeze weights for
-   *  inspection unless "update weights" is on. No-op outside demo mode. */
+   *  inspection unless "update weights" is on. While "Train demo model" is on
+   *  the loop runs the real generated set and always updates. No-op otherwise. */
   function syncDemoLoop(): void {
-    state.loop.freezeWeights = state.demoExamples && !state.demoUpdateWeights;
-    if (state.demoExamples) {
+    const onDemos = state.demoExamples && !state.demoTraining;
+    state.loop.freezeWeights = onDemos && !state.demoUpdateWeights;
+    if (onDemos) {
       const pos = state.dataset.test.findIndex((e) => e.index === state.demoIndex);
       state.loop.setDemoPosition(pos >= 0 ? pos : 0);
     }
@@ -259,6 +262,8 @@ window.addEventListener("DOMContentLoaded", () => {
     state,
     apply(patch) {
       Object.assign(state, patch);
+      // Leaving demo mode also ends any in-progress "train demo model" phase.
+      if ("demoExamples" in patch && !state.demoExamples) state.demoTraining = false;
       if ("learningRate" in patch) state.optim.setLearningRate(state.learningRate);
       if ("uiFontPx" in patch) {
         root.style.setProperty("--ui-font-px", `${state.uiFontPx}px`);
@@ -289,8 +294,12 @@ window.addEventListener("DOMContentLoaded", () => {
           Math.min(state.parensDelims, maxDelims(state.numSymbols)),
         );
         state.testSetSize = Math.min(state.testSetSize, testSetMax(state));
-        // A different task has its own demo list — start at the first.
-        if ("task" in patch) state.demoIndex = 0;
+        // A different task has its own demo list — start at the first, and end
+        // any train-demo phase.
+        if ("task" in patch) {
+          state.demoIndex = 0;
+          state.demoTraining = false;
+        }
         state.running = false;
         doRebuild();
       } else if (keys.some((k) => DATA_ONLY_KEYS.has(k as keyof AppState))) {

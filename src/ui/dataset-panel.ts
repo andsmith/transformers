@@ -296,9 +296,20 @@ export function mountDatasetPanel(
   demoActions.className = "demo-actions";
   demoActions.append(applySetupBtn, demoUpdateCheck.el);
 
+  // Train the configured model on a real generated set (resembling the demos),
+  // then click again to stop and run the curated examples.
+  const trainDemoBtn = makeButton("▶ Train demo model", () => {
+    ctx.apply({ demoTraining: !ctx.state.demoTraining, running: true });
+  });
+  trainDemoBtn.classList.add("train-demo-btn");
+  trainDemoBtn.title =
+    "Train this model on a real, generated training set that resembles the " +
+    "demos (runs in the current run mode, showing test errors normally). " +
+    "Click again to stop training and run the demo examples.";
+
   const demoControls = document.createElement("div");
   demoControls.className = "demo-controls";
-  demoControls.append(demoSelRow, demoName, demoDesc, demoHint, demoActions);
+  demoControls.append(demoSelRow, demoName, demoDesc, demoHint, demoActions, trainDemoBtn);
 
   const normalControls = document.createElement("div");
   normalControls.className = "size-controls";
@@ -688,14 +699,19 @@ export function mountDatasetPanel(
     renderVocab();
 
     // --- demonstration mode: retitle + swap the Test-Set-Options body ---
+    // `demoMode` = the DEMONSTRATION box is shown; `showDemos` = we're actually
+    // running the curated set (not the temporary "train demo model" phase).
     const demoMode = s.demoExamples;
+    const showDemos = demoMode && !s.demoTraining;
     sizeTitle.textContent = demoMode
-      ? `DEMONSTRATION – ${TASK_SPECS[s.task].label}`
+      ? `DEMONSTRATION – ${TASK_SPECS[s.task].label}${s.demoTraining ? " · training" : ""}`
       : "Test Set Options";
     normalControls.style.display = demoMode ? "none" : "";
     demoControls.style.display = demoMode ? "" : "none";
     grokRow.style.display = demoMode ? "none" : "";
     grokStatus.style.display = demoMode ? "none" : "";
+    trainDemoBtn.textContent = s.demoTraining ? "■ Stop & run demos" : "▶ Train demo model";
+    trainDemoBtn.classList.toggle("training", s.demoTraining);
 
     if (demoMode) {
       curPrepared = prepareDemos(s.task, {
@@ -745,10 +761,10 @@ export function mountDatasetPanel(
     const haveEval = !!viewEval;
     const liveHaveEval = !!s.loop.lastTestEval;
     // input sort needs no eval; wrong/first/out do. Demos render in authored
-    // order (no sorting), so only the y/ŷ toggle stays live in demo mode.
-    inputBtn.disabled = demoMode;
-    wrongBtn.disabled = demoMode || !haveEval;
-    firstBtn.disabled = demoMode || !haveEval;
+    // order (no sorting), so only the y/ŷ toggle stays live while showing them.
+    inputBtn.disabled = showDemos;
+    wrongBtn.disabled = showDemos || !haveEval;
+    firstBtn.disabled = showDemos || !haveEval;
     outBtn.disabled = !haveEval;
     const arrow = (k: typeof sortKey) =>
       sortKey === k ? (sortDir === -1 ? " ▼" : " ▲") : "";
@@ -761,7 +777,7 @@ export function mountDatasetPanel(
     outBtn.textContent = outMode === "yhat" ? "out: ŷ" : "out: y";
 
     // Title: TEST SET (N% correct) - eval @ epoch E  /  - no eval yet
-    let titleStr = demoMode ? "Demonstration Set" : "Test Set";
+    let titleStr = showDemos ? "Demonstration Set" : "Test Set";
     if (haveEval && viewEval) {
       const correct = viewEval.filter((e) => e.wrong === 0).length;
       const pctCorrect = Math.round((correct / viewEval.length) * 100);
@@ -776,7 +792,7 @@ export function mountDatasetPanel(
     refreshBtn.disabled = !stale;
     refreshBtn.classList.toggle("stale", stale);
 
-    if (demoMode) {
+    if (showDemos) {
       const demoKey = `demo|${s.display}|${s.task}|${s.numSymbols}|${s.parensDelims}|${s.maxSeqLen}|${curSelIdx}|${outMode}|${viewEvalEpoch}`;
       if (s.dataset !== lastDataset || demoKey !== lastListKey) {
         renderDemoList(curPrepared, curSelIdx);
